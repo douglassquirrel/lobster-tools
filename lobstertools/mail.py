@@ -9,6 +9,7 @@ import json
 import os
 import re
 import sys
+import time
 from datetime import datetime
 
 from lobstertools import config, message
@@ -341,6 +342,20 @@ def line(entry):
                                entry["subject"])
 
 
+def watch_loop(look, now, sleep, timeout, every):
+    """Call look() until it returns something, sleeping every seconds between looks.
+
+    Returns what look() returned, or None once timeout seconds have passed (0: never)."""
+    start = now()
+    while True:
+        found = look()
+        if found:
+            return found
+        if timeout and now() - start >= timeout:
+            return None
+        sleep(every)
+
+
 def cmd_check(args):
     box = mailbox(resolve_root(args), args.me, "--as")
     found = entries(box, "new")
@@ -354,6 +369,20 @@ def cmd_check(args):
     else:
         print("No new mail for %s" % box.name)
     print(REMINDER)
+    return EXIT_OK
+
+
+def cmd_watch(args):
+    box = mailbox(resolve_root(args), args.me, "--as")
+    found = watch_loop(lambda: entries(box, "new"), time.monotonic, time.sleep,
+                       args.timeout, args.every)
+    if found is None:
+        raise Failure(EXIT_UNEXPECTED, "No new mail for %s after %g seconds" % (box.name, args.timeout))
+    if args.json:
+        print(json.dumps(found, indent=1))
+        return EXIT_OK
+    for entry in found:
+        print(line(entry))
     return EXIT_OK
 
 
@@ -482,7 +511,7 @@ def cmd_done(args):
 
 COMMANDS = {"init": cmd_init, "send": cmd_send, "check": cmd_check, "list": cmd_list,
             "read": cmd_read, "ack": cmd_ack, "done": cmd_done, "reply": cmd_reply,
-            "thread": cmd_thread}
+            "thread": cmd_thread, "watch": cmd_watch}
 
 
 def build_parser():
