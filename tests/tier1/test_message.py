@@ -57,9 +57,14 @@ def test_slug_lowercases_hyphenates_strips_accents_and_cuts_at_40():
     assert message.slug("") == "message"
 
 
-def test_date_header_is_iso_8601_with_offset_to_the_second():
-    assert message.format_date(NOW) == "2026-10-10T08:29:17+01:00"
-    assert message.format_date(NOW.astimezone(timezone.utc)) == "2026-10-10T07:29:17+00:00"
+def test_date_header_is_utc_to_the_second_marked_z_whatever_the_senders_clock():
+    assert message.format_date(NOW) == "2026-10-10T07:29:17Z"
+    assert message.format_date(NOW.astimezone(timezone.utc)) == "2026-10-10T07:29:17Z"
+
+
+def test_parse_date_reads_the_z_form_back_and_the_old_offset_form():
+    assert message.parse_date("2026-10-10T07:29:17Z") == NOW
+    assert message.parse_date("2026-10-10T08:29:17+01:00") == NOW
 
 
 def test_id_takes_its_minute_in_utc_whatever_the_senders_clock():

@@ -2,7 +2,7 @@
 
     From: training-video
     To: video-tools
-    Date: 2026-10-10T08:29:17+01:00
+    Date: 2026-10-10T07:29:17Z
     Subject: Request 11: phonemes
     Id: 2026-10-10-0829-training-video-request-11-phonemes
     In-Reply-To: <id>            (only on a reply)
@@ -17,7 +17,7 @@ import hashlib
 import re
 import unicodedata
 from collections import namedtuple
-from datetime import timezone
+from datetime import datetime, timezone
 
 REQUIRED = ["From", "To", "Date", "Subject", "Id", "Body-SHA-256"]
 ORDER = ["From", "To", "Date", "Subject", "Id", "In-Reply-To", "Body-SHA-256"]
@@ -62,7 +62,15 @@ def slug(text):
 
 
 def format_date(now):
-    return now.isoformat(timespec="seconds")
+    """Every stamp the tool writes is UTC and says so with Z, whatever clock the sender has."""
+    return now.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def parse_date(text):
+    """Reads a stamp back: the Z form, or an offset form (Python 3.9 cannot read Z itself)."""
+    if text.endswith("Z"):
+        text = text[:-1] + "+00:00"
+    return datetime.fromisoformat(text)
 
 
 def make_id(now, sender, subject):

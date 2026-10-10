@@ -10,7 +10,7 @@ import os
 import re
 import sys
 import time
-from datetime import datetime
+from datetime import datetime, timezone
 
 from lobstertools import config, message
 
@@ -525,7 +525,7 @@ def duty_state(box, now, stale_minutes):
         holder, since = handle.read().splitlines()[:2]
     with open(os.path.join(duty, "heartbeat"), encoding="utf-8") as handle:
         last_beat = handle.read().strip()
-    age = now - datetime.fromisoformat(last_beat)
+    age = now - message.parse_date(last_beat)
     minutes = int(age.total_seconds() // 60)
     return {"mailbox": box.name, "holder": holder, "since": since, "last_beat": last_beat,
             "stale": minutes >= stale_minutes, "minutes": minutes}
@@ -542,7 +542,8 @@ def retire_duty(box, now, holder):
     log = box.folder("duty-log")
     if not os.path.isdir(log):
         os.mkdir(log)
-    dest = os.path.join(log, "%s-%s" % (now.strftime("%Y-%m-%dT%H-%M-%S"), holder))
+    utc = now.astimezone(timezone.utc)
+    dest = os.path.join(log, "%s-%s" % (utc.strftime("%Y-%m-%dT%H-%M-%S"), holder))
     os.rename(box.folder("duty"), dest)
     return dest
 

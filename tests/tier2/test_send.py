@@ -20,7 +20,7 @@ def test_send_delivers_to_new_and_keeps_the_same_bytes_in_sent(run, root, two):
     parsed = message.parse(delivered)
     assert parsed.body == HOSTILE
     assert parsed.headers == {
-        "From": "a", "To": "b", "Date": "2026-10-10T10:00:00+01:00", "Subject": "Hello there",
+        "From": "a", "To": "b", "Date": "2026-10-10T09:00:00Z", "Subject": "Hello there",
         "Id": ID, "Body-SHA-256": hashlib.sha256(HOSTILE).hexdigest(),
     }
     assert "Sent %s to b" % ID in out
@@ -84,7 +84,7 @@ def test_send_dry_run_shows_the_headers_and_writes_nothing(run, root, two):
                        "Hello there", str(two), "--dry-run")
     assert code == 0
     assert "Would send %s to b" % ID in out
-    assert "From: a\nTo: b\nDate: 2026-10-10T10:00:00+01:00\nSubject: Hello there\nId: %s\n" % ID in out
+    assert "From: a\nTo: b\nDate: 2026-10-10T09:00:00Z\nSubject: Hello there\nId: %s\n" % ID in out
     for folder in ("new", "tmp"):
         assert files_in(root / "b" / folder) == []
     assert files_in(root / "a" / "sent") == []

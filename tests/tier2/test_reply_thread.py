@@ -73,9 +73,9 @@ def test_thread_prints_the_chain_oldest_first_with_folders_from_any_member(run, 
     run("reply", FIRST, "--root", str(root), "--as", "b", "-", stdin="Done.\n")
     run("reply", REPLY, "--root", str(root), "--as", "a", "-", stdin="Thanks.\n")
     expected = [
-        "new/   %s  a  2026-10-10T09:05:00+01:00  First request" % FIRST,
-        "sent/  %s  b  2026-10-10T10:00:00+01:00  Re: First request" % REPLY,
-        "new/   2026-10-10-0900-a-re-first-request  a  2026-10-10T10:00:00+01:00  Re: First request",
+        "new/   %s  a  2026-10-10T08:05:00Z  First request" % FIRST,
+        "sent/  %s  b  2026-10-10T09:00:00Z  Re: First request" % REPLY,
+        "new/   2026-10-10-0900-a-re-first-request  a  2026-10-10T09:00:00Z  Re: First request",
     ]
     for member in (FIRST, REPLY, "2026-10-10-0900-a-re-first-request"):
         code, out, err = run("thread", member, "--root", str(root), "--as", "b")
