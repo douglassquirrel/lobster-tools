@@ -3,7 +3,7 @@ import json
 from conftest import every_file
 from lobstertools import mail
 
-FIRST = "2026-10-10-0905-a-first-request"
+FIRST = "2026-10-10-0805-a-first-request"
 
 
 def test_watch_returns_at_once_when_mail_is_waiting(run, root, mail_for_b):

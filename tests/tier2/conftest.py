@@ -75,7 +75,7 @@ def mail_for_b(run, root, two, monkeypatch):
     assert code == 0, err
     monkeypatch.setenv("LOBSTER_MAIL_NOW", NOW)
     (root / "b" / "new" / "note-from-squirrel.md").write_bytes(b"From: me\n\nJust a note.\n")
-    return ["2026-10-10-0905-a-first-request", "2026-10-10-0940-a-second-a-follow-up",
+    return ["2026-10-10-0805-a-first-request", "2026-10-10-0840-a-second-a-follow-up",
             "note-from-squirrel"]
 
 

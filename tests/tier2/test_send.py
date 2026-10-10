@@ -5,7 +5,7 @@ import os
 from conftest import HOSTILE, every_file, files_in
 from lobstertools import message
 
-ID = "2026-10-10-1000-a-hello-there"
+ID = "2026-10-10-0900-a-hello-there"
 
 
 def test_send_delivers_to_new_and_keeps_the_same_bytes_in_sent(run, root, two):
@@ -32,7 +32,7 @@ def test_send_reads_the_body_from_stdin_with_a_dash(run, root, two):
     code, _, _ = run("send", "--root", str(root), "--as", "a", "--to", "b", "--subject", "Hi", "-",
                      stdin="from stdin\n")
     assert code == 0
-    delivered = (root / "b" / "new" / "2026-10-10-1000-a-hi.md").read_bytes()
+    delivered = (root / "b" / "new" / "2026-10-10-0900-a-hi.md").read_bytes()
     assert message.parse(delivered).body == b"from stdin\n"
 
 
@@ -102,8 +102,8 @@ def test_send_goes_through_tmp_and_publishes_by_rename(run, root, two, monkeypat
                      str(two))
     assert code == 0
     assert [(os.path.relpath(s, root), os.path.relpath(d, root)) for s, d in renames] == [
-        ("b/tmp/2026-10-10-1000-a-hi.md", "b/new/2026-10-10-1000-a-hi.md"),
-        ("a/tmp/2026-10-10-1000-a-hi.md", "a/sent/2026-10-10-1000-a-hi.md"),
+        ("b/tmp/2026-10-10-0900-a-hi.md", "b/new/2026-10-10-0900-a-hi.md"),
+        ("a/tmp/2026-10-10-0900-a-hi.md", "a/sent/2026-10-10-0900-a-hi.md"),
     ]
 
 
@@ -115,7 +115,7 @@ def test_a_failed_delivery_leaves_the_whole_file_in_tmp_and_names_it(run, root, 
     code, out, err = run("send", "--root", str(root), "--as", "a", "--to", "b", "--subject", "Hi",
                          str(two))
     assert code == 4
-    tmp = root / "b" / "tmp" / "2026-10-10-1000-a-hi.md"
+    tmp = root / "b" / "tmp" / "2026-10-10-0900-a-hi.md"
     assert "could not deliver" in err and str(tmp) in err and "Invalid argument" in err
     assert message.parse(tmp.read_bytes()).body == HOSTILE
     assert files_in(root / "b" / "new") == [] and files_in(root / "a" / "sent") == []
@@ -145,7 +145,7 @@ def test_send_adds_exactly_two_files_and_changes_no_other(run, root, mail_for_b,
     code, _, err = run("send", "--root", str(root), "--as", "b", "--to", "a", "--subject", "Hi", str(two))
     assert code == 0, err
     after = every_file(root)
-    assert sorted(set(after) - set(before)) == ["2026-10-10-1000-b-hi.md"]
+    assert sorted(set(after) - set(before)) == ["2026-10-10-0900-b-hi.md"]
     assert {name: after[name] for name in before} == before
-    assert files_in(root / "a" / "new") == ["2026-10-10-1000-b-hi.md"]
-    assert files_in(root / "b" / "sent") == ["2026-10-10-1000-b-hi.md"]
+    assert files_in(root / "a" / "new") == ["2026-10-10-0900-b-hi.md"]
+    assert files_in(root / "b" / "sent") == ["2026-10-10-0900-b-hi.md"]

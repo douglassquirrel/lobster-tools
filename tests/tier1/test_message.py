@@ -62,10 +62,11 @@ def test_date_header_is_iso_8601_with_offset_to_the_second():
     assert message.format_date(NOW.astimezone(timezone.utc)) == "2026-10-10T07:29:17+00:00"
 
 
-def test_id_is_date_time_sender_and_slug():
-    assert message.make_id(NOW, "training-video", "Request 11: Phonemes for the voice") == (
-        "2026-10-10-0829-training-video-request-11-phonemes-for-the-voice"
-    )
+def test_id_takes_its_minute_in_utc_whatever_the_senders_clock():
+    utc = "2026-10-10-0729-training-video-request-11-phonemes-for-the-voice"
+    assert message.make_id(NOW, "training-video", "Request 11: Phonemes for the voice") == utc
+    assert message.make_id(NOW.astimezone(timezone.utc), "training-video",
+                           "Request 11: Phonemes for the voice") == utc
 
 
 def test_unique_id_appends_a_counter_when_the_name_is_taken():

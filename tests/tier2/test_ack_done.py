@@ -4,8 +4,8 @@ import os
 from conftest import HOSTILE, every_file
 from lobstertools import message
 
-FIRST = "2026-10-10-0905-a-first-request"
-SECOND = "2026-10-10-0940-a-second-a-follow-up"
+FIRST = "2026-10-10-0805-a-first-request"
+SECOND = "2026-10-10-0840-a-second-a-follow-up"
 
 
 def test_ack_moves_a_new_message_to_open_and_prints_it(run, root, mail_for_b):

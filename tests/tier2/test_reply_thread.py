@@ -4,8 +4,8 @@ import json
 from conftest import every_file, files_in
 from lobstertools import message
 
-FIRST = "2026-10-10-0905-a-first-request"
-REPLY = "2026-10-10-1000-b-re-first-request"
+FIRST = "2026-10-10-0805-a-first-request"
+REPLY = "2026-10-10-0900-b-re-first-request"
 
 
 def test_reply_goes_to_the_original_sender_with_re_subject_and_in_reply_to(run, root, mail_for_b):
@@ -29,7 +29,7 @@ def test_reply_takes_a_subject_override_and_works_from_open_or_done(run, root, m
     code, _, _ = run("reply", FIRST, "--root", str(root), "--as", "b", str(body), "--subject",
                      "Built in commit abc1234")
     assert code == 0
-    sent = message.parse((root / "b" / "sent" / "2026-10-10-1000-b-built-in-commit-abc1234.md").read_bytes())
+    sent = message.parse((root / "b" / "sent" / "2026-10-10-0900-b-built-in-commit-abc1234.md").read_bytes())
     assert sent.headers["Subject"] == "Built in commit abc1234" and sent.headers["In-Reply-To"] == FIRST
     run("done", FIRST, "--root", str(root), "--as", "b")
     code, _, err = run("reply", FIRST, "--root", str(root), "--as", "b", str(body))
@@ -40,7 +40,7 @@ def test_a_reply_to_a_reply_does_not_pile_up_re(run, root, mail_for_b):
     run("reply", FIRST, "--root", str(root), "--as", "b", "-", stdin="Done.\n")
     code, _, _ = run("reply", REPLY, "--root", str(root), "--as", "a", "-", stdin="Thanks.\n")
     assert code == 0
-    back = message.parse((root / "b" / "new" / "2026-10-10-1000-a-re-first-request.md").read_bytes())
+    back = message.parse((root / "b" / "new" / "2026-10-10-0900-a-re-first-request.md").read_bytes())
     assert back.headers["Subject"] == "Re: First request" and back.headers["In-Reply-To"] == REPLY
 
 
@@ -74,9 +74,9 @@ def test_thread_prints_the_chain_oldest_first_with_folders_from_any_member(run, 
     expected = [
         "new/   %s  a  2026-10-10T09:05:00+01:00  First request" % FIRST,
         "sent/  %s  b  2026-10-10T10:00:00+01:00  Re: First request" % REPLY,
-        "new/   2026-10-10-1000-a-re-first-request  a  2026-10-10T10:00:00+01:00  Re: First request",
+        "new/   2026-10-10-0900-a-re-first-request  a  2026-10-10T10:00:00+01:00  Re: First request",
     ]
-    for member in (FIRST, REPLY, "2026-10-10-1000-a-re-first-request"):
+    for member in (FIRST, REPLY, "2026-10-10-0900-a-re-first-request"):
         code, out, err = run("thread", member, "--root", str(root), "--as", "b")
         assert code == 0, err
         assert out.splitlines() == expected, member

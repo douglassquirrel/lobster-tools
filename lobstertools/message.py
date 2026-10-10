@@ -17,6 +17,7 @@ import hashlib
 import re
 import unicodedata
 from collections import namedtuple
+from datetime import timezone
 
 REQUIRED = ["From", "To", "Date", "Subject", "Id", "Body-SHA-256"]
 ORDER = ["From", "To", "Date", "Subject", "Id", "In-Reply-To", "Body-SHA-256"]
@@ -65,7 +66,9 @@ def format_date(now):
 
 
 def make_id(now, sender, subject):
-    return "%s-%s-%s" % (now.strftime("%Y-%m-%d-%H%M"), sender, slug(subject))
+    """The minute is UTC, so ids from senders in different time zones sort by true time."""
+    utc = now.astimezone(timezone.utc)
+    return "%s-%s-%s" % (utc.strftime("%Y-%m-%d-%H%M"), sender, slug(subject))
 
 
 def unique_id(base, taken):
