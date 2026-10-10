@@ -1,0 +1,12 @@
+# Dev tooling only: the command itself needs nothing beyond Python 3.9's standard library.
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]
+addopts = "--cov=lobstertools --cov-report=term-missing"
+
+[tool.coverage.run]
+branch = true
+
+[tool.ruff]
+target-version = "py39"
+line-length = 100

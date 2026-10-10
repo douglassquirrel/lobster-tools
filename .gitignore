@@ -1,0 +1,11 @@
+# Dev tooling and caches; model files live in ~/models, secrets in ../<project>-secrets/
+.venv/
+__pycache__/
+.pytest_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+.DS_Store
+# Inbox items can be private or real data: keep everything but the README out of git
+inbox/*
+!inbox/README.md

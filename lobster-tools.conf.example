@@ -1,0 +1,10 @@
+# Copy to ~/.lobster-tools.conf and edit. Every setting can also be given as a flag on the command
+# line, which wins over this file, or as an environment variable (LOBSTER_<SETTING>), which wins
+# over this file too. This file is read, never run: KEY=value lines, # comments, optional quotes,
+# and a leading ~ in a path means your home folder. Only what belongs to this machine goes here;
+# nothing secret.
+#
+# The folder that holds every project's mailbox (lobster-mail). It must be reachable from every
+# machine or shell that sends or reads mail; in Claude's Linux device shell that is the mounted
+# path, e.g. ~/mnt/mail.
+#MAIL_ROOT=~/projects/mail
