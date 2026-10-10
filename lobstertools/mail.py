@@ -4,12 +4,14 @@ One folder per mailbox, one Markdown file per message, state kept as the folder 
 The tool adds files and renames them; it never edits, deletes or runs anything.
 """
 import argparse
+import hashlib
+import json
 import os
 import re
 import sys
 from datetime import datetime
 
-from lobstertools import config
+from lobstertools import config, message
 
 VERBS = ["init", "send", "reply", "check", "list", "read", "ack", "done", "thread", "watch", "duty"]
 BOXES = ["new", "open", "done", "sent"]
@@ -112,7 +114,126 @@ def cmd_init(args):
     return EXIT_OK
 
 
-COMMANDS = {"init": cmd_init}
+class Mailbox:
+    """The folders of one project's mailbox under the root. Nothing here touches the disk."""
+
+    def __init__(self, root, name):
+        self.root, self.name = root, name
+        self.path = os.path.join(root, name)
+
+    def folder(self, box):
+        return os.path.join(self.path, box)
+
+    def file(self, box, id_):
+        return os.path.join(self.path, box, id_ + ".md")
+
+    def exists(self):
+        return all(os.path.isdir(self.folder(box)) for box in FOLDERS)
+
+    def ids(self, boxes=FOLDERS):
+        found = set()
+        for box in boxes:
+            folder = self.folder(box)
+            if os.path.isdir(folder):
+                found.update(n[:-3] for n in os.listdir(folder) if n.endswith(".md"))
+        return found
+
+
+def mailbox(root, name, what):
+    check_name(name, what)
+    box = Mailbox(root, name)
+    if not box.exists():
+        raise Failure(
+            EXIT_PRECONDITION,
+            "no mailbox %s in %s (lobster-mail init %s makes one)" % (name, root, name),
+        )
+    return box
+
+
+def read_body(path, stdin):
+    if path == "-":
+        data = (stdin or sys.stdin).read()
+        body = data.encode("utf-8") if isinstance(data, str) else data
+    else:
+        if not os.path.isfile(path):
+            raise Failure(EXIT_USAGE, "body file %s is missing" % path)
+        with open(path, "rb") as handle:
+            body = handle.read()
+    if not body.strip():
+        raise Failure(EXIT_USAGE, "the body is empty; a message needs some text")
+    return body
+
+
+def check_subject(subject):
+    if subject is None or not subject.strip() or "\n" in subject or "\r" in subject:
+        raise Failure(EXIT_USAGE, "the subject must be one line and not empty")
+    return subject.strip()
+
+
+def publish(box, dest_box, id_, data):
+    """Write the file in tmp/ (O_EXCL), then rename it into dest_box: whole or absent, never
+    overwritten. On failure the file stays in tmp/ and is named."""
+    tmp, dest = box.file("tmp", id_), box.file(dest_box, id_)
+    try:
+        write_new_file(tmp, data)
+        if os.path.exists(dest):
+            raise OSError(17, "File exists")
+        os.rename(tmp, dest)
+    except OSError as problem:
+        raise Failure(
+            EXIT_WRITE,
+            "could not deliver %s to %s/%s/: %s; the partial file is %s"
+            % (id_, box.name, dest_box, problem.strerror or problem, tmp),
+        )
+    return dest
+
+
+def deliver(root, me, them, subject, body, in_reply_to, dry_run, as_json, verb_past):
+    now = clock()
+    taken = them.ids() | me.ids(["sent", "tmp"])
+    id_ = message.unique_id(message.make_id(now, me.name, subject), taken)
+    headers = {
+        "From": me.name,
+        "To": them.name,
+        "Date": message.format_date(now),
+        "Subject": subject,
+        "Id": id_,
+        "Body-SHA-256": message.body_hash(body),
+    }
+    if in_reply_to:
+        headers["In-Reply-To"] = in_reply_to
+    data = message.render(headers, body)
+    dest, copy = them.file("new", id_), me.file("sent", id_)
+    if dry_run:
+        print("Would %s %s to %s:" % (verb_past.lower().replace("sent", "send"), id_, them.name))
+        print(data.partition(b"\n\n")[0].decode("utf-8"))
+        print("  to:   " + dest)
+        print("  copy: " + copy)
+        return EXIT_OK
+    publish(them, "new", id_, data)
+    publish(me, "sent", id_, data)
+    digest = hashlib.sha256(data).hexdigest()
+    if as_json:
+        print(json.dumps({"id": id_, "from": me.name, "to": them.name, "subject": subject,
+                          "path": dest, "sent_copy": copy, "sha256": digest}, indent=1))
+    else:
+        print("%s %s to %s" % (verb_past, id_, them.name))
+        print("  " + dest)
+        print("  " + copy)
+        print("  SHA-256 of the file: " + digest)
+    return EXIT_OK
+
+
+def cmd_send(args, stdin=None):
+    root = resolve_root(args)
+    me = mailbox(root, args.me, "--as")
+    them = mailbox(root, args.to, "--to")
+    subject = check_subject(args.subject)
+    body = read_body(args.body, stdin)
+    return deliver(root, me, them, subject, body, None, args.dry_run, args.json, "Sent")
+
+
+COMMANDS = {"init": cmd_init, "send": cmd_send}
 
 
 def build_parser():
@@ -196,6 +317,8 @@ def main(argv=None, stdin=None):
     if command is None:
         return EXIT_OK
     try:
+        if args.verb in ("send", "reply"):
+            return command(args, stdin)
         return command(args)
     except Failure as failure:
         print("lobster-mail %s: %s" % (args.verb, failure), file=sys.stderr)
