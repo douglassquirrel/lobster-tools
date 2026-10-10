@@ -2,7 +2,7 @@ VERBS = ["init", "send", "reply", "check", "list", "read", "ack", "done", "threa
 
 
 def test_help_lists_every_verb(run):
-    code, out, err = run("--help")
+    code, out, _ = run("--help")
     assert code == 0
     for verb in VERBS:
         assert verb in out, verb
@@ -16,7 +16,7 @@ def test_each_verb_has_its_own_help(run):
 
 
 def test_no_verb_is_a_usage_error(run):
-    code, out, err = run()
+    code, _, err = run()
     assert code == 2
     assert "usage" in err.lower()
 

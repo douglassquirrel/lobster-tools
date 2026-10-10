@@ -3,6 +3,7 @@ import json
 import os
 
 from conftest import HOSTILE, every_file, files_in
+
 from lobstertools import message
 
 ID = "2026-10-10-0900-a-hello-there"
@@ -112,7 +113,7 @@ def test_a_failed_delivery_leaves_the_whole_file_in_tmp_and_names_it(run, root, 
         raise OSError(22, "Invalid argument")
 
     monkeypatch.setattr(os, "rename", refuse)
-    code, out, err = run("send", "--root", str(root), "--as", "a", "--to", "b", "--subject", "Hi",
+    code, _, err = run("send", "--root", str(root), "--as", "a", "--to", "b", "--subject", "Hi",
                          str(two))
     assert code == 4
     tmp = root / "b" / "tmp" / "2026-10-10-0900-a-hi.md"

@@ -1,6 +1,7 @@
 import json
 
 from conftest import every_file
+
 from lobstertools import mail
 
 FIRST = "2026-10-10-0805-a-first-request"
@@ -13,7 +14,7 @@ def test_watch_returns_at_once_when_mail_is_waiting(run, root, mail_for_b):
     assert lines[0].startswith(FIRST + "  a  ") and len(lines) == 3
     assert "new messages" not in out
     code, out, _ = run("watch", "--root", str(root), "--as", "b", "--json")
-    assert [i["id"] for i in json.loads(out)][0] == FIRST
+    assert json.loads(out)[0]["id"] == FIRST
 
 
 def test_watch_times_out_with_exit_5_when_nothing_arrives(run, root, two, monkeypatch):

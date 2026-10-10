@@ -10,3 +10,7 @@ branch = true
 [tool.ruff]
 target-version = "py39"
 line-length = 100
+
+[tool.ruff.lint]
+# UP031: the code uses printf-style formatting throughout, on purpose (decided 10 October 2026).
+ignore = ["UP031"]

@@ -326,7 +326,7 @@ def describe(box, box_name, filename):
         return {"id": h["Id"], "from": h["From"], "date": h["Date"], "subject": h["Subject"],
                 "box": box_name, "path": path, "headers": True}
     stamp = datetime.fromtimestamp(os.path.getmtime(path)).astimezone()
-    return {"id": filename[:-3] if filename.endswith(".md") else filename, "from": None,
+    return {"id": filename.removesuffix(".md"), "from": None,
             "date": message.format_date(stamp), "subject": filename, "box": box_name,
             "path": path, "headers": False}
 
