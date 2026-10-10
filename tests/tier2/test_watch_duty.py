@@ -143,3 +143,11 @@ def test_duty_changes_no_message_file(run, root, mail_for_b, monkeypatch):
     code, _, err = run("duty", "take", "--root", str(root), "--as", "b", "--session", "desk-2")
     assert code == 0, err
     assert every_file(root) == before
+
+
+def test_a_session_name_must_be_a_plain_name_since_it_names_a_folder(run, root, two):
+    for action in ("take", "beat", "release"):
+        code, out, err = run("duty", action, "--root", str(root), "--as", "a", "--session", "desk/1")
+        assert code == 2 and out == "", action
+        assert "--session 'desk/1' is not a plain folder name" in err, action
+    assert not duty_dir(root).exists() and not (root / "a" / "duty-log").exists()

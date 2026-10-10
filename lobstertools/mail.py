@@ -549,6 +549,8 @@ def write_heartbeat(box, beat):
 
 
 def cmd_duty(args):
+    if args.action != "status":
+        check_name(args.session, "--session")  # it names the folder in duty-log/
     box = mailbox(resolve_root(args), args.me, "--as")
     now = clock()
     stamp = message.format_date(now)
