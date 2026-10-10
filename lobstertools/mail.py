@@ -509,9 +509,99 @@ def cmd_done(args):
     return EXIT_OK
 
 
+def duty_state(box, now, stale_minutes):
+    """Who holds the duty of box, or None: holder, since, last beat, age in minutes, stale."""
+    duty = box.folder("duty")
+    if not os.path.isdir(duty):
+        return None
+    with open(os.path.join(duty, "holder"), encoding="utf-8") as handle:
+        holder, since = handle.read().splitlines()[:2]
+    with open(os.path.join(duty, "heartbeat"), encoding="utf-8") as handle:
+        last_beat = handle.read().strip()
+    age = now - datetime.fromisoformat(last_beat)
+    minutes = int(age.total_seconds() // 60)
+    return {"mailbox": box.name, "holder": holder, "since": since, "last_beat": last_beat,
+            "stale": minutes >= stale_minutes, "minutes": minutes}
+
+
+def write_duty(box, session, since, beat):
+    duty = box.folder("duty")
+    write_new_file(os.path.join(duty, "holder"), ("%s\n%s\n" % (session, since)).encode("utf-8"))
+    write_new_file(os.path.join(duty, "heartbeat"), ("%s\n" % beat).encode("utf-8"))
+
+
+def retire_duty(box, now, holder):
+    """Move duty/ into duty-log/<time>-<holder>/ by rename; nothing is deleted."""
+    log = box.folder("duty-log")
+    if not os.path.isdir(log):
+        os.mkdir(log)
+    dest = os.path.join(log, "%s-%s" % (now.strftime("%Y-%m-%dT%H-%M-%S"), holder))
+    os.rename(box.folder("duty"), dest)
+    return dest
+
+
+def write_heartbeat(box, beat):
+    """The one file the tool rewrites: written whole beside the old one, then renamed over it."""
+    duty = box.folder("duty")
+    fresh = os.path.join(duty, "heartbeat.%s" % os.getpid())
+    write_new_file(fresh, ("%s\n" % beat).encode("utf-8"))
+    os.rename(fresh, os.path.join(duty, "heartbeat"))
+
+
+def cmd_duty(args):
+    box = mailbox(resolve_root(args), args.me, "--as")
+    now = clock()
+    stamp = message.format_date(now)
+    state = duty_state(box, now, args.stale)
+    if args.action == "status":
+        if args.json:
+            print(json.dumps(state, indent=1))
+        elif state is None:
+            print("Nobody is on duty for %s" % box.name)
+        else:
+            print("%s: on duty %s since %s; last beat %s (%s, %d minutes ago)"
+                  % (box.name, state["holder"], state["since"], state["last_beat"],
+                     "stale" if state["stale"] else "fresh", state["minutes"]))
+        return EXIT_OK
+    if args.action == "take":
+        if state is not None and state["holder"] == args.session:
+            write_heartbeat(box, stamp)
+            print("%s is already on duty for %s since %s; heartbeat refreshed to %s"
+                  % (args.session, box.name, state["since"], stamp))
+            return EXIT_OK
+        if state is not None and not state["stale"]:
+            raise Failure(EXIT_PRECONDITION, "duty for %s is held by %s (last beat %s, %d minutes "
+                          "ago); take it when the heartbeat is older than %g minutes"
+                          % (box.name, state["holder"], state["last_beat"], state["minutes"],
+                             args.stale))
+        logged = retire_duty(box, now, state["holder"]) if state else None
+        os.mkdir(box.folder("duty"))
+        write_duty(box, args.session, stamp, stamp)
+        print("Duty for %s taken by %s at %s" % (box.name, args.session, stamp))
+        if logged:
+            print("took over from %s, whose heartbeat was stale (last beat %s, %d minutes ago); "
+                  "its duty folder is now %s" % (state["holder"], state["last_beat"],
+                                                 state["minutes"], logged))
+        return EXIT_OK
+    if state is None:
+        raise Failure(EXIT_PRECONDITION, "nobody is on duty for %s; take it with duty take"
+                      % box.name)
+    if state["holder"] != args.session:
+        raise Failure(EXIT_PRECONDITION, "duty for %s is held by %s, not %s (last beat %s)"
+                      % (box.name, state["holder"], args.session, state["last_beat"]))
+    if args.action == "beat":
+        write_heartbeat(box, stamp)
+        print("Heartbeat for %s on duty for %s: %s" % (args.session, box.name, stamp))
+        return EXIT_OK
+    logged = retire_duty(box, now, args.session)
+    print("Duty for %s released by %s at %s; its folder is now %s"
+          % (box.name, args.session, stamp, logged))
+    return EXIT_OK
+
+
 COMMANDS = {"init": cmd_init, "send": cmd_send, "check": cmd_check, "list": cmd_list,
             "read": cmd_read, "ack": cmd_ack, "done": cmd_done, "reply": cmd_reply,
-            "thread": cmd_thread, "watch": cmd_watch}
+            "thread": cmd_thread, "watch": cmd_watch, "duty": cmd_duty}
 
 
 def build_parser():
@@ -591,6 +681,8 @@ def main(argv=None, stdin=None):
         args.me = os.environ.get("LOBSTER_MAIL_AS") or None
         if not args.me:
             parser.error("--as NAME is required (or set LOBSTER_MAIL_AS)")
+    if args.verb == "duty" and args.action != "status" and not args.session:
+        parser.error("--session NAME is required for duty %s" % args.action)
     command = COMMANDS.get(args.verb)
     if command is None:
         return EXIT_OK
