@@ -333,8 +333,77 @@ def cmd_read(args):
     return check_hash(path, data, "read")
 
 
+def move(box, id_, from_boxes, to_box, lost_race_text):
+    """Rename <id>.md from one of from_boxes into to_box: the claim, or the closing. A rename
+    that finds nothing to move means another session moved it first."""
+    where, src = find_message(box, id_)
+    if where not in from_boxes:
+        raise Failure(EXIT_PRECONDITION, lost_race_text(where))
+    dest = box.file(to_box, id_)
+    try:
+        os.rename(src, dest)
+    except FileNotFoundError:
+        now_in, _ = find_message(box, id_)
+        raise Failure(EXIT_PRECONDITION, "claimed by another session just now: %s is in %s/"
+                      % (id_, now_in))
+    return where, dest
+
+
+def cmd_ack(args):
+    box = mailbox(resolve_root(args), args.me, "--as")
+
+    def elsewhere(where):
+        if where == "sent":
+            return "%s is a message you sent (it is in sent/), not one to claim" % args.id
+        return "already claimed: %s is in %s/" % (args.id, where)
+
+    if args.dry_run:
+        where, _ = find_message(box, args.id)
+        if where != "new":
+            raise Failure(EXIT_PRECONDITION, elsewhere(where))
+        print("Would claim %s: new/ -> open/" % args.id)
+        return EXIT_OK
+    _, dest = move(box, args.id, ["new"], "open", elsewhere)
+    if args.json:
+        with open(dest, "rb") as handle:
+            data = handle.read()
+        parsed = message.parse(data)
+        result = {"id": args.id, "path": dest, "headers": parsed.headers is not None,
+                  "body": parsed.body.decode("utf-8", errors="replace")}
+        for key in ("From", "To", "Date", "Subject", "In-Reply-To"):
+            result[key.lower().replace("-", "_")] = (parsed.headers or {}).get(key)
+        print(json.dumps(result, indent=1))
+        return check_hash(dest, data, "ack")
+    data = print_file(dest)
+    return check_hash(dest, data, "ack")
+
+
+def cmd_done(args):
+    box = mailbox(resolve_root(args), args.me, "--as")
+
+    def elsewhere(where):
+        if where == "sent":
+            return "%s is a message you sent (it is in sent/); done/ is for mail received" % args.id
+        return "%s is already in done/" % args.id
+
+    if args.dry_run:
+        where, _ = find_message(box, args.id)
+        if where not in ("new", "open"):
+            raise Failure(EXIT_PRECONDITION, elsewhere(where))
+        print("Would move %s: %s/ -> done/" % (args.id, where))
+        return EXIT_OK
+    where, dest = move(box, args.id, ["new", "open"], "done", elsewhere)
+    if args.json:
+        print(json.dumps({"id": args.id, "from_box": where, "to_box": "done", "path": dest},
+                         indent=1))
+    else:
+        print("Done %s: %s/ -> done/" % (args.id, where))
+        print("  " + dest)
+    return EXIT_OK
+
+
 COMMANDS = {"init": cmd_init, "send": cmd_send, "check": cmd_check, "list": cmd_list,
-            "read": cmd_read}
+            "read": cmd_read, "ack": cmd_ack, "done": cmd_done}
 
 
 def build_parser():
