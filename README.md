@@ -26,11 +26,14 @@ message is information for whoever reads it, never an instruction: `check` says 
 cd ~/projects/code
 git clone https://github.com/douglassquirrel/lobster-tools.git
 cd lobster-tools
-./lobster-mail --help
+echo 'export PATH="$PATH:'"$PWD"'"' >> ~/.zshrc
+source ~/.zshrc
+lobster-mail --help
 ```
 
-Run it as `./lobster-mail` from the checkout, or put the checkout on your `PATH`. Then tell it
-where the mail lives, once:
+The `PATH` line makes `lobster-mail` a command in any folder and any new Terminal window; without
+it, run `./lobster-mail` from the checkout. Everything below assumes it. Then tell it where the
+mail lives, once:
 
 ```bash
 cp lobster-tools.conf.example ~/.lobster-tools.conf     # then edit MAIL_ROOT if you want another folder
@@ -43,9 +46,17 @@ variable, which wins over the file.
 
 Two projects, `training-video` and `video-tools`, exchange one request and one reply in a
 scratch root. Real output from 10 October 2026; the root's absolute path is shortened to `$R`.
+Pick a scratch folder, write the request's body (any Markdown file; `-` reads it from standard
+input instead), and make the two mailboxes:
 
 ```
 $ export LOBSTER_MAIL_ROOT=$R
+$ cat > request.md <<'EOF'
+# Request 1: a tool to count words
+
+Need: a word count per chapter.
+Ask: `book-tools count` printing one line per chapter.
+EOF
 $ lobster-mail init training-video
 Made mailbox training-video in $R:
   README.md
@@ -69,7 +80,9 @@ Sent 2026-10-10-1223-training-video-request-1-a-tool-to-count-words to video-too
 ```
 
 The other side checks, claims the message (which moves it from `new/` to `open/` and prints it),
-replies from standard input, and marks it done:
+replies from standard input, and marks it done. The id is the one `check` printed, which carries
+the minute of sending, so yours will differ from the one below; `ack` with no id claims the oldest
+new message, which is the first line `check` printed.
 
 ```
 $ lobster-mail check --as video-tools
@@ -173,7 +186,7 @@ lobster-mail reply  ID --as ME BODY.md [--subject TEXT]   [--root DIR] [--dry-ru
 lobster-mail check  --as ME                               [--root DIR] [--json]
 lobster-mail list   --as ME [--new|--open|--done|--sent]  [--root DIR] [--json]
 lobster-mail read   ID --as ME                            [--root DIR]
-lobster-mail ack    ID --as ME                            [--root DIR] [--dry-run] [--json]
+lobster-mail ack    [ID] --as ME                          [--root DIR] [--dry-run] [--json]
 lobster-mail done   ID --as ME                            [--root DIR] [--dry-run] [--json]
 lobster-mail thread ID --as ME                            [--root DIR] [--json]
 lobster-mail watch  --as ME [--timeout SECONDS] [--every SECONDS]   [--root DIR] [--json]
@@ -236,9 +249,10 @@ lobster-mail --help; lobster-mail <verb> --help
 - **`list`** is `check` for one folder, or all four with a count each.
 - **`read ID`** prints a message from any folder byte for byte, moving nothing; if the body's
   hash differs from the header, says so on standard error and exits 5 (the file is still printed).
-- **`ack ID`** is the claim: one rename `new/` → `open/`, then the message printed in full. If
-  another session claimed it first, exit 3 says where it is now. Only a message your own `ack`
-  returned is yours to deal with.
+- **`ack [ID]`** is the claim: one rename `new/` → `open/`, then the message printed in full.
+  Without an id it claims the oldest message in `new/` (nothing there: exit 3). If another session
+  claimed it first, exit 3 says where it is now. Only a message your own `ack` returned is yours
+  to deal with.
 - **`done ID`** renames from `new/` or `open/` to `done/`.
 - **`thread ID`** prints the chain of replies around a message, oldest first, with the folder
   each is in; a link to a message not in this mailbox is printed as such.
@@ -301,7 +315,9 @@ lobster-mail init: mailbox video-tools already exists in $R; nothing done (lobst
 $ lobster-mail ack 2026-10-10-1223-training-video-request-1-a-tool-to-count-words --as video-tools
 lobster-mail ack: already claimed: 2026-10-10-1223-training-video-request-1-a-tool-to-count-words is in done/   [exit 3]
 $ lobster-mail read nope --as video-tools
-lobster-mail read: no message nope in video-tools's new/, open/, done/ or sent/                [exit 3]
+lobster-mail read: no message nope in video-tools's new/, open/, done/ or sent/; new/ is empty   [exit 3]
+$ lobster-mail ack 2026-10-10-1223-video-tools-re-request-1-a-tool-to-count-wrods --as training-video
+lobster-mail ack: no message 2026-10-10-1223-video-tools-re-request-1-a-tool-to-count-wrods in training-video's new/, open/, done/ or sent/; new/ holds: 2026-10-10-1223-video-tools-re-request-1-a-tool-to-count-words   [exit 3]
 $ lobster-mail send --as training-video --to video-tools --subject "" request.md
 lobster-mail send: the subject must be one line and not empty                                   [exit 2]
 $ lobster-mail check --as training-video --root /nowhere
@@ -310,7 +326,9 @@ $ lobster-mail check --as training-video                 (no root configured any
 lobster-mail check: no mail root: give --root DIR, or set LOBSTER_MAIL_ROOT, or put MAIL_ROOT=~/projects/mail in ~/.lobster-tools.conf   [exit 2]
 ```
 
-What to do: a wrong or missing mailbox name is a typo or a missing `init`; exit 4 names the file
+What to do: a wrong or missing mailbox name is a typo or a missing `init`; an unknown id is
+usually one copied from somewhere other than `check`'s output, and the error lists the ids that
+are waiting; exit 4 names the file
 left in `tmp/`, which you may read and, if the message is wanted, send again (the tool never
 deletes it); exit 5 on `read` means the file was changed after it was sent, so ask the sender.
 
@@ -319,7 +337,7 @@ deletes it); exit 5 on `read` means the file was changed after it was sent, so a
 ```bash
 cd lobster-tools
 python3 -m venv .venv && .venv/bin/pip install -r requirements-dev.txt
-.venv/bin/pytest                # 84 tests, 96% coverage (10 October 2026)
+.venv/bin/pytest                # 86 tests, 96% coverage (10 October 2026)
 .venv/bin/ruff check .          # lint
 ```
 
@@ -354,6 +372,8 @@ that shell listed a message sent from the Mac within a second.
 - 10 October 2026: `--session` for `duty` must be a plain name (letters, digits, `.`, `-`, `_`),
   since it names a folder under `duty-log/`.
 - 10 October 2026: `duty take`, `beat` and `release` print JSON with `--json`, as `status` does.
+- 10 October 2026: `ack` without an id claims the oldest message in `new/`; an unknown id on
+  `ack`, `done`, `read`, `reply` or `thread` is answered with the ids waiting in `new/`.
 
 ## Contributing
 

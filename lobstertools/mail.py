@@ -460,6 +460,11 @@ def move(box, id_, from_boxes, to_box, lost_race_text):
 
 def cmd_ack(args):
     box = mailbox(resolve_root(args), args.me, "--as")
+    if args.id is None:
+        waiting = entries(box, "new")
+        if not waiting:
+            raise Failure(EXIT_PRECONDITION, "no new mail for %s; nothing to claim" % box.name)
+        args.id = waiting[0]["id"]
 
     def elsewhere(where):
         if where == "sent":
@@ -668,7 +673,7 @@ def build_parser():
     sub.add_argument("id", metavar="ID")
 
     sub = verb("ack", "claim a new message (new -> open) and print it", dry_run=True)
-    sub.add_argument("id", metavar="ID")
+    sub.add_argument("id", metavar="ID", nargs="?", help="default: the oldest message in new/")
 
     sub = verb("done", "mark a message dealt with (new or open -> done)", dry_run=True)
     sub.add_argument("id", metavar="ID")

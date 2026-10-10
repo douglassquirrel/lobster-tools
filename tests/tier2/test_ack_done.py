@@ -118,3 +118,21 @@ def test_an_unknown_id_is_answered_with_the_ids_waiting_in_new(run, root, mail_f
     assert code == 3 and "; new/ holds: 2026-10-10-0805-a-first-request, " in err
     code, _, err = run("ack", "nothing-here", "--root", str(root), "--as", "a")
     assert code == 3 and "or sent/; new/ is empty" in err
+
+
+def test_ack_without_an_id_claims_the_oldest_new_message(run, root, mail_for_b):
+    before = every_file(root)
+    code, out, err = run("ack", "--root", str(root), "--as", "b", "--dry-run")
+    assert code == 0, err
+    assert out.strip() == "Would claim %s: new/ -> open/" % FIRST
+    assert every_file(root) == before
+    code, out, err = run("ack", "--root", str(root), "--as", "b")
+    assert code == 0, err
+    assert out.startswith("From: a\nTo: b\n") and "Subject: First request\n" in out
+    assert os.path.isfile(root / "b" / "open" / (FIRST + ".md"))
+    assert every_file(root) == before
+    code, out, _ = run("ack", "--root", str(root), "--as", "b", "--json")
+    assert code == 0 and json.loads(out)["id"] == SECOND
+    code, out, err = run("ack", "--root", str(root), "--as", "a")
+    assert code == 3 and out == ""
+    assert "no new mail for a; nothing to claim" in err
