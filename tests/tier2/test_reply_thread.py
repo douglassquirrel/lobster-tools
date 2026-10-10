@@ -1,7 +1,7 @@
 import hashlib
 import json
 
-from conftest import files_in
+from conftest import every_file, files_in
 from lobstertools import message
 
 FIRST = "2026-10-10-0905-a-first-request"
@@ -100,3 +100,14 @@ def test_thread_json_and_unknown_id(run, root, mail_for_b):
     assert [(i["id"], i["box"], i["in_reply_to"]) for i in items] == [(FIRST, "new", None), (REPLY, "sent", FIRST)]
     code, _, err = run("thread", "nothing-here", "--root", str(root), "--as", "b")
     assert code == 3 and "no message nothing-here" in err
+
+
+def test_reply_adds_exactly_two_files_and_changes_no_other(run, root, mail_for_b):
+    before = every_file(root)
+    code, _, err = run("reply", FIRST, "--root", str(root), "--as", "b", "-", stdin="Done.\n")
+    assert code == 0, err
+    after = every_file(root)
+    assert sorted(set(after) - set(before)) == [REPLY + ".md"]
+    assert {name: after[name] for name in before} == before
+    assert files_in(root / "a" / "new") == [REPLY + ".md"]
+    assert files_in(root / "b" / "sent") == [REPLY + ".md"]

@@ -1,23 +1,11 @@
-import hashlib
 import json
 import os
 
-from conftest import HOSTILE
+from conftest import HOSTILE, every_file
 from lobstertools import message
 
 FIRST = "2026-10-10-0905-a-first-request"
 SECOND = "2026-10-10-0940-a-second-a-follow-up"
-
-
-def every_file(root):
-    """Every message file under the root with its hash: the multiset no verb may shrink or change."""
-    found = {}
-    for name in ("a", "b"):
-        for box in ("tmp", "new", "open", "done", "sent"):
-            folder = root / name / box
-            for path in folder.iterdir():
-                found[path.name] = hashlib.sha256(path.read_bytes()).hexdigest()
-    return found
 
 
 def test_ack_moves_a_new_message_to_open_and_prints_it(run, root, mail_for_b):

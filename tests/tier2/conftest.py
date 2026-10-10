@@ -1,5 +1,6 @@
 """Runs lobster-mail's main() in-process against a scratch mail root, with the clock fixed."""
 import contextlib
+import hashlib
 import io
 
 import pytest
@@ -76,3 +77,16 @@ def mail_for_b(run, root, two, monkeypatch):
     (root / "b" / "new" / "note-from-squirrel.md").write_bytes(b"From: me\n\nJust a note.\n")
     return ["2026-10-10-0905-a-first-request", "2026-10-10-0940-a-second-a-follow-up",
             "note-from-squirrel"]
+
+
+def every_file(root):
+    """Every message file under the root with its hash: the multiset no verb may shrink or change
+    (CLAUDE.md non-negotiable 1). A verb that adds a message may only add; a verb that moves one
+    keeps the same names and bytes."""
+    found = {}
+    for name in ("a", "b"):
+        for box in ("tmp", "new", "open", "done", "sent"):
+            folder = root / name / box
+            for path in folder.iterdir():
+                found[path.name] = hashlib.sha256(path.read_bytes()).hexdigest()
+    return found

@@ -2,7 +2,7 @@ import hashlib
 import json
 import os
 
-from conftest import HOSTILE, files_in
+from conftest import HOSTILE, every_file, files_in
 from lobstertools import message
 
 ID = "2026-10-10-1000-a-hello-there"
@@ -138,3 +138,14 @@ def test_send_json_names_the_id_the_paths_and_the_hash(run, root, two):
         "path": str(delivered), "sent_copy": str(root / "a" / "sent" / (ID + ".md")),
         "sha256": hashlib.sha256(delivered.read_bytes()).hexdigest(),
     }
+
+
+def test_send_adds_exactly_two_files_and_changes_no_other(run, root, mail_for_b, two):
+    before = every_file(root)
+    code, _, err = run("send", "--root", str(root), "--as", "b", "--to", "a", "--subject", "Hi", str(two))
+    assert code == 0, err
+    after = every_file(root)
+    assert sorted(set(after) - set(before)) == ["2026-10-10-1000-b-hi.md"]
+    assert {name: after[name] for name in before} == before
+    assert files_in(root / "a" / "new") == ["2026-10-10-1000-b-hi.md"]
+    assert files_in(root / "b" / "sent") == ["2026-10-10-1000-b-hi.md"]

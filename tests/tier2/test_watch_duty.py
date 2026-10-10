@@ -1,5 +1,6 @@
 import json
 
+from conftest import every_file
 from lobstertools import mail
 
 FIRST = "2026-10-10-0905-a-first-request"
@@ -123,3 +124,22 @@ def test_duty_take_beat_and_release_need_a_session_name(run, root, two):
         assert code == 2 and "--session" in err, action
     code, _, _ = run("duty", "status", "--root", str(root), "--as", "a")
     assert code == 0
+
+
+def test_watch_changes_no_message_file(run, root, mail_for_b):
+    before = every_file(root)
+    code, _, err = run("watch", "--root", str(root), "--as", "b", "--timeout", "30")
+    assert code == 0, err
+    assert every_file(root) == before
+
+
+def test_duty_changes_no_message_file(run, root, mail_for_b, monkeypatch):
+    before = every_file(root)
+    for action in ("take", "beat", "release"):
+        code, _, err = run("duty", action, "--root", str(root), "--as", "b", "--session", "desk-1")
+        assert code == 0, (action, err)
+    run("duty", "take", "--root", str(root), "--as", "b", "--session", "desk-1")
+    monkeypatch.setenv("LOBSTER_MAIL_NOW", "2026-10-10T10:46:00+01:00")
+    code, _, err = run("duty", "take", "--root", str(root), "--as", "b", "--session", "desk-2")
+    assert code == 0, err
+    assert every_file(root) == before
