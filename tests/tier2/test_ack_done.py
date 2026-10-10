@@ -105,3 +105,16 @@ def test_done_dry_run_moves_nothing(run, root, mail_for_b):
     assert code == 0 and "Would move %s: new/ -> done/" % FIRST in out
     assert (root / "b" / "new" / (FIRST + ".md")).exists()
     assert every_file(root) == before
+
+
+def test_an_unknown_id_is_answered_with_the_ids_waiting_in_new(run, root, mail_for_b):
+    for verb in ("ack", "done", "read", "thread"):
+        code, _, err = run(verb, "2026-10-10-0805-a-first-reqeust", "--root", str(root), "--as", "b")
+        assert code == 3, verb
+        assert ("no message 2026-10-10-0805-a-first-reqeust in b's new/, open/, done/ or sent/; "
+                "new/ holds: 2026-10-10-0805-a-first-request, 2026-10-10-0840-a-second-a-follow-up, "
+                "note-from-squirrel") in err, verb
+    code, _, err = run("reply", "nothing-here", "--root", str(root), "--as", "b", "-", stdin="x\n")
+    assert code == 3 and "; new/ holds: 2026-10-10-0805-a-first-request, " in err
+    code, _, err = run("ack", "nothing-here", "--root", str(root), "--as", "a")
+    assert code == 3 and "or sent/; new/ is empty" in err

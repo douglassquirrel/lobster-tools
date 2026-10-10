@@ -405,10 +405,12 @@ def find_message(box, id_, boxes=BOXES):
         path = box.file(name, id_)
         if os.path.isfile(path):
             return name, path
+    waiting = [e["id"] for e in entries(box, "new")]
     raise Failure(
         EXIT_PRECONDITION,
-        "no message %s in %s's %s" % (id_, box.name, ", ".join(b + "/" for b in boxes[:-1])
-                                         + " or " + boxes[-1] + "/"),
+        "no message %s in %s's %s; new/ %s" % (
+            id_, box.name, ", ".join(b + "/" for b in boxes[:-1]) + " or " + boxes[-1] + "/",
+            "holds: " + ", ".join(waiting) if waiting else "is empty"),
     )
 
 
