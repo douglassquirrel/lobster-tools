@@ -151,3 +151,30 @@ def test_a_session_name_must_be_a_plain_name_since_it_names_a_folder(run, root, 
         assert code == 2 and out == "", action
         assert "--session 'desk/1' is not a plain folder name" in err, action
     assert not duty_dir(root).exists() and not (root / "a" / "duty-log").exists()
+
+
+def test_duty_take_beat_and_release_print_json_when_asked(run, root, two, monkeypatch):
+    code, out, _ = run("duty", "take", "--root", str(root), "--as", "a", "--session", "desk-1", "--json")
+    assert code == 0 and json.loads(out) == {
+        "mailbox": "a", "holder": "desk-1", "since": "2026-10-10T10:00:00+01:00",
+        "last_beat": "2026-10-10T10:00:00+01:00", "action": "taken"}
+    monkeypatch.setenv("LOBSTER_MAIL_NOW", "2026-10-10T10:05:00+01:00")
+    code, out, _ = run("duty", "take", "--root", str(root), "--as", "a", "--session", "desk-1", "--json")
+    assert code == 0 and json.loads(out)["action"] == "refreshed"
+    assert json.loads(out)["last_beat"] == "2026-10-10T10:05:00+01:00"
+    code, out, _ = run("duty", "beat", "--root", str(root), "--as", "a", "--session", "desk-1", "--json")
+    assert code == 0 and json.loads(out) == {
+        "mailbox": "a", "holder": "desk-1", "since": "2026-10-10T10:00:00+01:00",
+        "last_beat": "2026-10-10T10:05:00+01:00", "action": "beat"}
+    code, out, _ = run("duty", "release", "--root", str(root), "--as", "a", "--session", "desk-1", "--json")
+    assert code == 0 and json.loads(out) == {
+        "mailbox": "a", "holder": "desk-1", "since": "2026-10-10T10:00:00+01:00",
+        "last_beat": "2026-10-10T10:05:00+01:00", "action": "released",
+        "logged": str(root / "a" / "duty-log" / "2026-10-10T10-05-00-desk-1")}
+    run("duty", "take", "--root", str(root), "--as", "a", "--session", "desk-1")
+    monkeypatch.setenv("LOBSTER_MAIL_NOW", "2026-10-10T10:51:00+01:00")
+    code, out, _ = run("duty", "take", "--root", str(root), "--as", "a", "--session", "desk-2", "--json")
+    assert code == 0 and json.loads(out) == {
+        "mailbox": "a", "holder": "desk-2", "since": "2026-10-10T10:51:00+01:00",
+        "last_beat": "2026-10-10T10:51:00+01:00", "action": "taken", "took_over_from": "desk-1",
+        "logged": str(root / "a" / "duty-log" / "2026-10-10T10-51-00-desk-1")}

@@ -568,9 +568,9 @@ def cmd_duty(args):
     if args.action == "take":
         if state is not None and state["holder"] == args.session:
             write_heartbeat(box, stamp)
-            print("%s is already on duty for %s since %s; heartbeat refreshed to %s"
-                  % (args.session, box.name, state["since"], stamp))
-            return EXIT_OK
+            return report_duty(args, box, args.session, state["since"], stamp, "refreshed", [
+                "%s is already on duty for %s since %s; heartbeat refreshed to %s"
+                % (args.session, box.name, state["since"], stamp)])
         if state is not None and not state["stale"]:
             raise Failure(EXIT_PRECONDITION, "duty for %s is held by %s (last beat %s, %d minutes "
                           "ago); take it when the heartbeat is older than %g minutes"
@@ -579,12 +579,14 @@ def cmd_duty(args):
         logged = retire_duty(box, now, state["holder"]) if state else None
         os.mkdir(box.folder("duty"))
         write_duty(box, args.session, stamp, stamp)
-        print("Duty for %s taken by %s at %s" % (box.name, args.session, stamp))
+        lines = ["Duty for %s taken by %s at %s" % (box.name, args.session, stamp)]
+        extra = {}
         if logged:
-            print("took over from %s, whose heartbeat was stale (last beat %s, %d minutes ago); "
-                  "its duty folder is now %s" % (state["holder"], state["last_beat"],
-                                                 state["minutes"], logged))
-        return EXIT_OK
+            lines.append("took over from %s, whose heartbeat was stale (last beat %s, %d minutes "
+                         "ago); its duty folder is now %s" % (state["holder"], state["last_beat"],
+                                                               state["minutes"], logged))
+            extra = {"took_over_from": state["holder"], "logged": logged}
+        return report_duty(args, box, args.session, stamp, stamp, "taken", lines, extra)
     if state is None:
         raise Failure(EXIT_PRECONDITION, "nobody is on duty for %s; take it with duty take"
                       % box.name)
@@ -593,11 +595,24 @@ def cmd_duty(args):
                       % (box.name, state["holder"], args.session, state["last_beat"]))
     if args.action == "beat":
         write_heartbeat(box, stamp)
-        print("Heartbeat for %s on duty for %s: %s" % (args.session, box.name, stamp))
-        return EXIT_OK
+        return report_duty(args, box, args.session, state["since"], stamp, "beat", [
+            "Heartbeat for %s on duty for %s: %s" % (args.session, box.name, stamp)])
     logged = retire_duty(box, now, args.session)
-    print("Duty for %s released by %s at %s; its folder is now %s"
-          % (box.name, args.session, stamp, logged))
+    return report_duty(args, box, args.session, state["since"], state["last_beat"], "released", [
+        "Duty for %s released by %s at %s; its folder is now %s"
+        % (box.name, args.session, stamp, logged)], {"logged": logged})
+
+
+def report_duty(args, box, holder, since, last_beat, action, lines, extra=None):
+    """Print a duty action's result as text, or as JSON with --json."""
+    if args.json:
+        result = {"mailbox": box.name, "holder": holder, "since": since, "last_beat": last_beat,
+                  "action": action}
+        result.update(extra or {})
+        print(json.dumps(result, indent=1))
+    else:
+        for text in lines:
+            print(text)
     return EXIT_OK
 
 
