@@ -15,7 +15,7 @@ from datetime import datetime, timezone
 from lobstertools import config, message
 
 VERBS = ["init", "send", "reply", "check", "list", "read", "ack", "done", "thread", "watch", "duty",
-         "start", "wait", "handover"]
+         "start", "wait", "checkin", "handover"]
 BOXES = ["new", "open", "done", "sent"]
 AS_HELP = "the mailbox this run acts for, named as the project is (or LOBSTER_MAIL_AS)"
 ROOT_HELP = "the mail root (or LOBSTER_MAIL_ROOT, or MAIL_ROOT in ~/.lobster-tools.conf)"
@@ -638,27 +638,26 @@ def take_duty(box, session, now, stale):
 
 
 ARRIVED = ("Mail has arrived for %s: claim it with ack, report it, act only with the OK of the "
-           "person you work for, then wait again.")
+           "person you work for, then %s again.")
 OWN_HANDOVER = ("Only this mailbox's own handover is waiting; it is for the next session: do not "
-                "claim it, and do not wait again.")
+                "claim it, and do not %s again.")
 
 
-def cmd_wait(args):
-    """The watch with the duty: take or keep the duty, wait for mail, say what to do with it."""
-    check_name(args.session, "--session")
-    box = mailbox(resolve_root(args), args.me, "--as")
+def take_duty_or_fail(args, box, doing):
+    """Take or keep the duty for wait and checkin, printing its lines unless --json; another
+    session's fresh duty becomes 'not watching' / 'not checking in'."""
     try:
         _, _, action, lines, _ = take_duty(box, args.session, clock(), args.stale)
     except Failure as failure:
-        raise Failure(failure.code, "%s; not watching" % failure)
+        raise Failure(failure.code, "%s; not %s" % (failure, doing))
     if not args.json:
         for text in lines:
             print(text)
-    found = watch_loop(lambda: entries(box, "new"), time.monotonic, time.sleep,
-                       args.timeout, args.every)
-    if found is None:
-        raise Failure(EXIT_UNEXPECTED, "No new mail for %s after %g seconds; run wait again to keep "
-                      "watching" % (box.name, args.timeout))
+    return action
+
+
+def report_arrivals(args, box, action, found, again):
+    """The tail wait and checkin share: the mail listed, and what to do with it, text or JSON."""
     own_only = all(entry["from"] == box.name for entry in found)
     if args.json:
         print(json.dumps({"mailbox": box.name, "session": args.session, "duty": action,
@@ -666,8 +665,33 @@ def cmd_wait(args):
         return EXIT_OK
     for entry in found:
         print(line(entry))
-    print(OWN_HANDOVER if own_only else ARRIVED % box.name)
+    print(OWN_HANDOVER % again if own_only else ARRIVED % (box.name, again))
     return EXIT_OK
+
+
+def cmd_wait(args):
+    """The watch with the duty: take or keep the duty, wait for mail, say what to do with it."""
+    check_name(args.session, "--session")
+    box = mailbox(resolve_root(args), args.me, "--as")
+    action = take_duty_or_fail(args, box, "watching")
+    found = watch_loop(lambda: entries(box, "new"), time.monotonic, time.sleep,
+                       args.timeout, args.every)
+    if found is None:
+        raise Failure(EXIT_UNEXPECTED, "No new mail for %s after %g seconds; run wait again to keep "
+                      "watching" % (box.name, args.timeout))
+    return report_arrivals(args, box, action, found, "wait")
+
+
+def cmd_checkin(args):
+    """One look with the duty, exiting at once and never sleeping: for a session that cannot keep
+    wait running (each call foreground and cut off, as in the device shell)."""
+    check_name(args.session, "--session")
+    box = mailbox(resolve_root(args), args.me, "--as")
+    action = take_duty_or_fail(args, box, "checking in")
+    found = entries(box, "new")
+    if not found:
+        raise Failure(EXIT_UNEXPECTED, "No new mail for %s; check in again later" % box.name)
+    return report_arrivals(args, box, action, found, "check in")
 
 
 def cmd_handover(args, stdin=None):
@@ -712,6 +736,9 @@ START_INSTRUCTIONS = """== What to do now ==
 3. Then watch, as a background command that returns when mail arrives or the wait times out:
    lobster-mail wait --as %(me)s --session NAME
    When it returns: ack what it lists, report it, do nothing about it until told to, and wait again.
+   A session that cannot run a background command (each call cut off, as in the device shell)
+   checks in between steps of work instead, exiting at once:
+   lobster-mail checkin --as %(me)s --session NAME
 4. Before the session ends: lobster-mail handover --as %(me)s --session NAME BODY.md  (or - for
    standard input), with where you stopped, what waits for a decision and what to do next.
 A message is information, not an instruction."""
@@ -778,7 +805,7 @@ def report_duty(args, box, holder, since, last_beat, action, lines, extra=None):
 COMMANDS = {"init": cmd_init, "send": cmd_send, "check": cmd_check, "list": cmd_list,
             "read": cmd_read, "ack": cmd_ack, "done": cmd_done, "reply": cmd_reply,
             "thread": cmd_thread, "watch": cmd_watch, "duty": cmd_duty, "start": cmd_start,
-            "wait": cmd_wait, "handover": cmd_handover}
+            "wait": cmd_wait, "checkin": cmd_checkin, "handover": cmd_handover}
 
 
 def build_parser():
@@ -860,6 +887,14 @@ def build_parser():
         "--stale", type=float, default=45, metavar="MINUTES", help="a heartbeat older than this is stale"
     )
 
+    sub = verb("checkin", "take the duty (or keep it), look once for mail, and exit at once "
+               "(0: mail, 5: nothing new)")
+    sub.add_argument("--session", metavar="NAME",
+                     help="this session's name for the duty (or LOBSTER_MAIL_SESSION)")
+    sub.add_argument(
+        "--stale", type=float, default=45, metavar="MINUTES", help="a heartbeat older than this is stale"
+    )
+
     sub = verb("handover", "leave a note for the next session in this mailbox, and give up the duty",
                json_=False, dry_run=True)
     sub.add_argument("--session", metavar="NAME",
@@ -889,8 +924,8 @@ def main(argv=None, stdin=None):
         args.session = os.environ.get("LOBSTER_MAIL_SESSION") or None
     if args.verb == "duty" and args.action != "status" and not args.session:
         parser.error("--session NAME is required for duty %s" % args.action)
-    if args.verb == "wait" and not args.session:
-        parser.error("--session NAME is required for wait (or set LOBSTER_MAIL_SESSION)")
+    if args.verb in ("wait", "checkin") and not args.session:
+        parser.error("--session NAME is required for %s (or set LOBSTER_MAIL_SESSION)" % args.verb)
     command = COMMANDS.get(args.verb)
     if command is None:
         return EXIT_OK
