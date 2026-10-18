@@ -48,6 +48,17 @@ class Failure(Exception):
         self.code = code
 
 
+class DutyChanging(Failure):
+    """A duty/ caught between its mkdir and its files: being taken or given up right now."""
+
+    def __init__(self, name):
+        super().__init__(EXIT_PRECONDITION, "the duty of %s is being taken or given up right now; "
+                         "run again" % name)
+
+
+CHANGING_SAY = "the duty of %s is being taken or given up right now; run duty status again"
+
+
 def clock():
     fixed = os.environ.get("LOBSTER_MAIL_NOW")
     if fixed:
@@ -538,15 +549,23 @@ def cmd_done(args):
 
 
 def duty_state(box, now, stale_minutes):
-    """Who holds the duty of box, or None: holder, since, last beat, age in minutes, stale."""
+    """Who holds the duty of box, or None: holder, since, last beat, age in minutes, stale.
+    A duty/ gone before its files are read is None; one whose files are missing or not yet
+    written is DutyChanging (exit 3). Never a retry."""
     duty = box.folder("duty")
     if not os.path.isdir(duty):
         return None
-    with open(os.path.join(duty, "holder"), encoding="utf-8") as handle:
-        holder, since = handle.read().splitlines()[:2]
-    with open(os.path.join(duty, "heartbeat"), encoding="utf-8") as handle:
-        last_beat = handle.read().strip()
-    age = now - message.parse_date(last_beat)
+    try:
+        with open(os.path.join(duty, "holder"), encoding="utf-8") as handle:
+            holder, since = handle.read().splitlines()[:2]
+        with open(os.path.join(duty, "heartbeat"), encoding="utf-8") as handle:
+            last_beat = handle.read().strip()
+        beat_time = message.parse_date(last_beat)
+    except (OSError, ValueError):
+        if not os.path.exists(duty):
+            return None
+        raise DutyChanging(box.name)
+    age = now - beat_time
     minutes = int(age.total_seconds() // 60)
     return {"mailbox": box.name, "holder": holder, "since": since, "last_beat": last_beat,
             "stale": minutes >= stale_minutes, "minutes": minutes}
@@ -593,7 +612,11 @@ def cmd_duty_all(args):
             skipped.append(name)
             continue
         waiting = entries(box, "new")
-        found.append({"mailbox": name, "duty": duty_state(box, now, args.stale),
+        try:
+            duty, changing = duty_state(box, now, args.stale), False
+        except DutyChanging:
+            duty, changing = None, True
+        found.append({"mailbox": name, "duty": duty, "duty_changing": changing,
                       "new": len(waiting), "open": len(entries(box, "open")),
                       "handover_waiting": any(e["from"] == name for e in waiting)})
     if args.json:
@@ -604,7 +627,9 @@ def cmd_duty_all(args):
     width = max([len(e["mailbox"]) for e in found] + [0])
     for entry in found:
         duty = entry["duty"]
-        if duty is None:
+        if entry["duty_changing"]:
+            who = "duty being taken or given up right now"
+        elif duty is None:
             who = "nobody on duty"
         else:
             who = "on duty %s, %s, last beat %s (%d minutes ago)" % (
@@ -750,7 +775,11 @@ def cmd_handover(args, stdin=None):
     deliver(root, me, me, subject, body, None, args.dry_run, False, "Sent", "send")
     if args.dry_run or not args.session:
         return EXIT_OK
-    state = duty_state(me, now, 45)
+    try:
+        state = duty_state(me, now, 45)
+    except DutyChanging:
+        print("Nothing released: " + CHANGING_SAY % me.name)
+        return EXIT_OK
     if state is None:
         print("Nothing released: nobody is on duty for %s" % me.name)
     elif state["holder"] != args.session:
@@ -827,7 +856,10 @@ def cmd_start(args):
     print("-- Open (claimed earlier, not yet closed with done):")
     report_folders({"open": entries(box, "open")}, ["open"])
     print("-- Duty:")
-    report_duty_status(box, duty_state(box, now, 45))
+    try:
+        report_duty_status(box, duty_state(box, now, 45))
+    except DutyChanging:
+        print("T" + CHANGING_SAY[1:] % box.name)
     print(START_INSTRUCTIONS % {"me": box.name})
     return EXIT_OK
 

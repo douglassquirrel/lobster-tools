@@ -298,13 +298,15 @@ lobster-mail --help; lobster-mail <verb> --help
   ```
   $ ./lobster-mail duty status --all
   book-tools      nobody on duty  new 1  open 0  handover waiting
-  training-video  nobody on duty  new 0  open 0  handover no
-  video-tools     on duty desk-1, fresh, last beat 2026-10-18T15:10:54Z (0 minutes ago)  new 1  open 0  handover no
+  training-video  duty being taken or given up right now  new 0  open 0  handover no
+  video-tools     on duty desk-1, fresh, last beat 2026-10-18T15:45:03Z (0 minutes ago)  new 1  open 0  handover no
   Not mailboxes, skipped: scratch
   ```
   With `--json`, one object: `root`, `skipped` (the folder names) and `mailboxes`, each with
-  `mailbox`, `new`, `open`, `handover_waiting`, and `duty`, which is exactly what
-  `duty status --as <it> --json` prints for that mailbox, or `null` when nobody is on duty:
+  `mailbox`, `new`, `open`, `handover_waiting`, `duty_changing`, and `duty`, which is exactly what
+  `duty status --as <it> --json` prints for that mailbox, or `null`. `null` with
+  `duty_changing` `false` is nobody on duty; with `true`, the duty was caught being taken or given
+  up (see below) and a second run will say which:
   ```
   $ ./lobster-mail duty status --all --json
   {
@@ -313,6 +315,7 @@ lobster-mail --help; lobster-mail <verb> --help
     {
      "mailbox": "book-tools",
      "duty": null,
+     "duty_changing": false,
      "new": 1,
      "open": 0,
      "handover_waiting": true
@@ -320,6 +323,7 @@ lobster-mail --help; lobster-mail <verb> --help
     {
      "mailbox": "training-video",
      "duty": null,
+     "duty_changing": true,
      "new": 0,
      "open": 0,
      "handover_waiting": false
@@ -329,11 +333,12 @@ lobster-mail --help; lobster-mail <verb> --help
      "duty": {
       "mailbox": "video-tools",
       "holder": "desk-1",
-      "since": "2026-10-18T15:10:54Z",
-      "last_beat": "2026-10-18T15:10:54Z",
+      "since": "2026-10-18T15:45:03Z",
+      "last_beat": "2026-10-18T15:45:03Z",
       "stale": false,
       "minutes": 0
      },
+     "duty_changing": false,
      "new": 1,
      "open": 0,
      "handover_waiting": false
@@ -343,6 +348,16 @@ lobster-mail --help; lobster-mail <verb> --help
     "scratch"
    ]
   }
+  ```
+- **A duty caught while it changes.** Taking a duty makes `duty/` and then writes its two files;
+  a reader may look in between. Any verb that reads a duty then refuses with exit 3 rather than
+  guess: `the duty of ME is being taken or given up right now; run again`. Run it again a moment
+  later. `start` says the same in its Duty part and still exits 0; `handover` sends its note and
+  says "Nothing released: …" (exit 0); `duty status --all` marks that one mailbox
+  `duty_changing`. A duty given up (renamed away) just as it is read is simply nobody on duty.
+  ```
+  $ ./lobster-mail duty status --as training-video
+  lobster-mail duty: the duty of training-video is being taken or given up right now; run again
   ```
 - **`start`** is what a session reads first, and what a Claude Code `SessionStart` hook runs. It
   claims, prints and closes the previous session's handover (every message in `new/` from the
@@ -478,7 +493,7 @@ and a non-zero exit code. Standard output carries only results.
 |------|---------|----------|
 | 0 | Success, or with `--dry-run` everything checked and nothing done; `start` always, so a session start never breaks (its failure is said on both streams) | |
 | 2 | Bad arguments | no verb or an unknown one; `--as`, `--to`, `--subject` or `--session` missing; an empty or multi-line subject; an empty or missing body; a name with a path separator; no mail root configured; `duty status --all` with `--as`, or `--all` on another `duty` action |
-| 3 | A precondition is not met | no such mailbox (sender, recipient or `--as`); the root folder is missing (`duty status --all`); the mailbox already exists (`init`); no such message; the message is not in the folder the verb moves from; the duty is held by another session |
+| 3 | A precondition is not met | no such mailbox (sender, recipient or `--as`); the root folder is missing (`duty status --all`); the mailbox already exists (`init`); no such message; the message is not in the folder the verb moves from; the duty is held by another session; the duty is being taken or given up right now (run again) |
 | 4 | Could not write or rename | permission, disk full, a file that appeared under the chosen name; the partial file in `tmp/` is named and left |
 | 5 | A message is not as expected, or nothing came | the body's hash differs on `read` or `ack`; `reply` to a file with no `From`; `watch` or `wait` timed out; `checkin` found nothing new |
 
@@ -512,7 +527,7 @@ deletes it); exit 5 on `read` means the file was changed after it was sent, so a
 ```bash
 cd lobster-tools
 python3 -m venv .venv && .venv/bin/pip install -r requirements-dev.txt
-.venv/bin/pytest                # 126 tests, 97% coverage (18 October 2026)
+.venv/bin/pytest                # 133 tests, 97% coverage (18 October 2026)
 .venv/bin/ruff check .          # lint
 ```
 
@@ -565,6 +580,11 @@ the same before and after, and each mailbox's `duty` matched its own `duty statu
 - 18 October 2026: `duty status --all` lists every mailbox under the root at once, with who is on
   duty, the counts in `new/` and `open/`, and whether a handover is waiting; read-only. With
   `--json`, each mailbox's `duty` is the same object `duty status --as` prints.
+- 18 October 2026: a duty caught between being made and being written (another session taking
+  or giving it up at that moment) is now a plain refusal, exit 3, "being taken or given up right
+  now; run again", from every verb that reads a duty, where it used to be a Python traceback or a
+  misleading "could not write" (exit 4). `duty status --all` gains `duty_changing` on every
+  mailbox.
 
 ## Contributing
 

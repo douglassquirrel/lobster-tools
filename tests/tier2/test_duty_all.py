@@ -32,8 +32,10 @@ def all_json(run, root, *extra):
 def test_json_lists_each_mailbox_in_name_order_with_its_counts(run, root, mail_for_b):
     run("ack", "--as", "b", "--root", str(root))
     assert all_json(run, root) == {"root": str(root), "skipped": [], "mailboxes": [
-        {"mailbox": "a", "duty": None, "new": 0, "open": 0, "handover_waiting": False},
-        {"mailbox": "b", "duty": None, "new": 2, "open": 1, "handover_waiting": False},
+        {"mailbox": "a", "duty": None, "duty_changing": False, "new": 0, "open": 0,
+         "handover_waiting": False},
+        {"mailbox": "b", "duty": None, "duty_changing": False, "new": 2, "open": 1,
+         "handover_waiting": False},
     ]}
 
 
