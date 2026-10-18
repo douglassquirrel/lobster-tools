@@ -4,6 +4,7 @@ One folder per mailbox, one Markdown file per message, state kept as the folder 
 The tool adds files and renames them; it never edits, deletes or runs anything.
 """
 import argparse
+import fcntl
 import hashlib
 import json
 import os
@@ -217,6 +218,18 @@ def publish(box, dest_box, id_, data):
 
 
 def deliver(root, me, them, subject, body, in_reply_to, dry_run, as_json, verb_past, verb):
+    """Sends from one mailbox take turns (Request 5): the lock on ME's folder is held from reading
+    the ids already taken until both copies are written, and goes when the folder is closed."""
+    fd = os.open(me.path, os.O_RDONLY)
+    try:
+        fcntl.flock(fd, fcntl.LOCK_EX)
+        return deliver_locked(me, them, subject, body, in_reply_to, dry_run, as_json, verb_past,
+                              verb)
+    finally:
+        os.close(fd)
+
+
+def deliver_locked(me, them, subject, body, in_reply_to, dry_run, as_json, verb_past, verb):
     now = clock()
     taken = them.ids() | me.ids(["sent", "tmp"])
     id_ = message.unique_id(message.make_id(now, me.name, subject), taken)
