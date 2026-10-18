@@ -248,7 +248,11 @@ lobster-mail --help; lobster-mail <verb> --help
 - **`send`** writes the message to `<THEM>/tmp/`, renames it into `<THEM>/new/` (so a reader never
   sees a part-written file), then writes a copy the same way into `<ME>/sent/`, and prints the id,
   both paths and the file's SHA-256. Refuses a recipient with no mailbox (exit 3) and an empty or
-  missing body or subject (exit 2), writing nothing.
+  missing body or subject (exit 2), writing nothing. Sends from one mailbox take turns: each holds
+  a lock on the sender's mailbox folder from choosing the id until both copies are written, so two
+  sends at the same moment get `…` and `…-2`, as two sends one after another do. If the message
+  was delivered but its copy for `sent/` could not be written, it exits 7 and says so: the message
+  was sent, so do not send it again.
 - **`reply ID`** is `send` to the original's sender, with `In-Reply-To` and the `Re:` subject. The
   original is not moved. Refuses a message you sent yourself, and a hand-dropped file with no
   `From` (exit 5: use `send`).
@@ -601,9 +605,10 @@ and a non-zero exit code. Standard output carries only results.
 | 0 | Success, or with `--dry-run` everything checked and nothing done; `start` always, so a session start never breaks (its failure is said on both streams) | |
 | 2 | Bad arguments | no verb or an unknown one; `--as`, `--to`, `--subject` or `--session` missing; an empty or multi-line subject; an empty or missing body; a name with a path separator; no mail root configured; `duty status --all` with `--as`, or `--all` on another `duty` action; a pace other than eager, normal or relaxed |
 | 3 | A precondition is not met | no such mailbox (sender, recipient or `--as`); the root folder is missing (`duty status --all`); the mailbox already exists (`init`); no such message; the message is not in the folder the verb moves from; the duty is held by another session; the duty is being taken or given up right now (run again) |
-| 4 | Could not write or rename | permission, disk full, a file that appeared under the chosen name; the partial file in `tmp/` is named and left |
+| 4 | Could not write or rename | permission, disk full, a file that appeared under the chosen name; the partial file in `tmp/` is named and left when this run wrote one |
 | 5 | A message is not as expected, or nothing came | the body's hash differs on `read` or `ack`; `reply` to a file with no `From`; `watch` or `wait` timed out; `checkin` found nothing new; a pace file holding no level (`pace`) |
 | 6 | The pace changed while `wait` watched | run `pace` and follow what it prints, then watch again as it says |
+| 7 | Delivered, but no copy in `sent/` (`send`, `reply`, `handover`) | the recipient has the message; its copy could not be written into the sender's `sent/` (permission, disk full). Do not send it again |
 
 ```
 $ ./lobster-mail send --as training-video --to vidoe-tools --subject "typo" request.md
@@ -622,20 +627,24 @@ $ ./lobster-mail check --as training-video --root /nowhere
 lobster-mail check: no mailbox training-video in /nowhere (lobster-mail init training-video makes one)   [exit 3]
 $ ./lobster-mail check --as training-video                 (no root configured anywhere)
 lobster-mail check: no mail root: give --root DIR, or set LOBSTER_MAIL_ROOT, or put MAIL_ROOT=~/projects/mail in ~/.lobster-tools.conf (or connect the mail folder so that ~/mnt/mail exists)   [exit 2]
+$ chmod 555 $R/a/sent; print "Hello." | ./lobster-mail send --root $R --as a --to b --subject "Hello" -
+lobster-mail send: delivered 2026-10-18-2013-a-hello to b ($R/b/new/2026-10-18-2013-a-hello.md), but its copy could not be written to a/sent/: Permission denied; the copy is left in $R/a/tmp/2026-10-18-2013-a-hello.md. The message was sent: do not send it again.   [exit 7]
 ```
 
 What to do: a wrong or missing mailbox name is a typo or a missing `init`; an unknown id is
 usually one copied from somewhere other than `check`'s output, and the error lists the ids that
 are waiting; exit 4 names the file
 left in `tmp/`, which you may read and, if the message is wanted, send again (the tool never
-deletes it); exit 5 on `read` means the file was changed after it was sent, so ask the sender.
+deletes it); exit 7 means the message reached the recipient, so do not send it again: only your
+own copy is missing, and the file it names in `tmp/` holds it; exit 5 on `read` means the file
+was changed after it was sent, so ask the sender.
 
 ## Testing
 
 ```bash
 cd lobster-tools
 python3 -m venv .venv && .venv/bin/pip install -r requirements-dev.txt
-.venv/bin/pytest                # 153 tests, 97% coverage (18 October 2026)
+.venv/bin/pytest                # 162 tests, 97% coverage (18 October 2026)
 .venv/bin/ruff check .          # lint
 ```
 
@@ -651,7 +660,11 @@ from a Linux shell whose home folder is a mount of the Mac's, where the claim, t
 the heartbeat rename all worked and every file's hash was identical from both sides; a `watch` on
 that shell listed a message sent from the Mac within a second. And (18 October 2026)
 `duty status --all` on the real mail root, text and JSON: every file and folder under it hashed
-the same before and after, and each mailbox's `duty` matched its own `duty status --as`.
+the same before and after, and each mailbox's `duty` matched its own `duty status --as`. And
+(18 October 2026) thirty rounds of three real sends from one mailbox started at once on a
+scratch root: 90 delivered under 90 different ids, each with its sent copy, none failed, `tmp/`
+empty (the version before the lock, on the same rounds: 52 of the 90 said they had failed though
+every one was delivered, and only 38 ids were distinct); and exit 7 with `sent/` made read-only.
 
 ## Known limitations and non-goals
 
@@ -659,8 +672,9 @@ the same before and after, and each mailbox's `duty` matched its own `duty statu
   and a session checks its mail when it starts and when told to.
 - No editing or deleting of messages, no archive beyond `done/`, no search beyond `list` and
   `thread`. A sender cannot recall a message.
-- No permissions, locking or encryption beyond the atomic rename and the duty lock: one user, one
-  machine, a few sessions that rarely write at once.
+- No permissions, locking or encryption beyond the atomic rename, the duty lock, and the lock
+  that makes sends from one mailbox take turns: one user, one machine, a few sessions that rarely
+  write at once. Where the file system refuses that lock, a send goes ahead without it, as before.
 - The tool moves files; it never acts on what a message says. The person in charge decides.
 - Two retirements of the same session's duty folder within one second would collide on the
   `duty-log/` name; the second rename then fails with exit 4 and nothing is lost.
@@ -714,6 +728,12 @@ the same before and after, and each mailbox's `duty` matched its own `duty statu
   relaxed, `start`, `wait` and `checkin` print that level's routine. `wait` returns with a new exit
   code, 6, when the pace changes while it watches. `duty status --all` gains `pace` per mailbox,
   and the mail root's `README.md` from `init` lists the `pace` file.
+- 18 October 2026: sends from one mailbox at the same moment take turns, so each gets its own id
+  (`…`, `…-2`); before, two at once could choose the same id and the second reported a failure
+  although its message had been delivered. A message delivered whose copy for `sent/` could not
+  be written now exits with a new code, 7, saying it was delivered and not to send it again,
+  where it used to be exit 4, "could not deliver". An error names a partial file in `tmp/` only
+  when that run wrote it.
 
 ## Contributing
 
