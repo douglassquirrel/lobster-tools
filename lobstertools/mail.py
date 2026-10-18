@@ -238,10 +238,14 @@ def publish(box, dest_box, id_, data):
 
 def deliver(root, me, them, subject, body, in_reply_to, dry_run, as_json, verb_past, verb):
     """Sends from one mailbox take turns (Request 5): the lock on ME's folder is held from reading
-    the ids already taken until both copies are written, and goes when the folder is closed."""
+    the ids already taken until both copies are written, and goes when the folder is closed.
+    Where the file system refuses the lock, the send goes ahead unlocked, as it did before."""
     fd = os.open(me.path, os.O_RDONLY)
     try:
-        fcntl.flock(fd, fcntl.LOCK_EX)
+        try:
+            fcntl.flock(fd, fcntl.LOCK_EX)
+        except OSError:
+            pass
         return deliver_locked(me, them, subject, body, in_reply_to, dry_run, as_json, verb_past,
                               verb)
     finally:

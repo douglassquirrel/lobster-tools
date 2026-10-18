@@ -167,3 +167,29 @@ def test_a_write_that_fails_part_way_names_the_partial_file(run, root, two, monk
     assert err == ("lobster-mail send: could not deliver %s to b/new/: No space left on device; "
                    "the partial file is %s\n" % (HI, partial))
     assert partial.read_bytes() == b"From: a\nTo"
+
+
+def test_a_send_goes_ahead_unlocked_where_the_file_system_refuses_the_lock(run, root, two,
+                                                                          monkeypatch):
+    def refuse(fd, op):
+        raise OSError(45, "Operation not supported")
+
+    monkeypatch.setattr(fcntl, "flock", refuse)
+    code, out, err = send_hi(run, root, two)
+    assert (code, err) == (0, "")
+    assert out.startswith("Sent %s to b\n" % HI)
+    assert files_in(root / "b" / "new") == files_in(root / "a" / "sent") == [HI + ".md"]
+
+
+def test_a_destination_that_appears_after_the_ids_were_read_is_never_overwritten(run, root, two,
+                                                                                 monkeypatch):
+    there = root / "b" / "new" / (HI + ".md")
+    there.write_bytes(b"already here\n")
+    monkeypatch.setattr(mail.Mailbox, "ids", lambda self, boxes=None: set())
+    code, out, err = send_hi(run, root, two)
+    left = root / "b" / "tmp" / (HI + ".md")
+    assert (code, out) == (4, "")
+    assert err == ("lobster-mail send: could not deliver %s to b/new/: File exists; the partial "
+                   "file is %s\n" % (HI, left))
+    assert there.read_bytes() == b"already here\n"
+    assert message.parse(left.read_bytes()).body == HOSTILE
