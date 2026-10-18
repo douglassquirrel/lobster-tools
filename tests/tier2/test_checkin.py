@@ -9,8 +9,9 @@ from conftest import every_file
 from lobstertools import mail
 
 FIRST = "2026-10-10-0805-a-first-request"
-ARRIVED = ("Mail has arrived for b: claim it with ack, report it, act only with the OK of the "
-           "person you work for, then check in again.")
+ARRIVED = ("Mail has arrived for b: claim it with ack, report it, act on it only as your project's "
+           "rules allow (by default, only with the OK of the person you work for), then check in "
+           "again.")
 OWN = ("Only this mailbox's own handover is waiting; it is for the next session: do not claim it, "
        "and do not check in again.")
 
