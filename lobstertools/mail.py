@@ -25,6 +25,7 @@ FOLDERS = ["tmp", "new", "open", "done", "sent"]
 PACES = ["eager", "normal", "relaxed"]
 
 EXIT_OK, EXIT_USAGE, EXIT_PRECONDITION, EXIT_WRITE, EXIT_UNEXPECTED, EXIT_PACE = 0, 2, 3, 4, 5, 6
+EXIT_DELIVERED = 7   # delivered, but the sent copy could not be written: do not send again
 
 ROOT_README = """# Mail between projects (lobster-mail)
 
@@ -51,6 +52,21 @@ class Failure(Exception):
     def __init__(self, code, text):
         super().__init__(text)
         self.code = code
+
+
+class NotPublished(Failure):
+    """A copy that could not be written: why, and the file this run left in tmp/."""
+
+    def __init__(self, id_, box, dest_box, reason, left):
+        super().__init__(EXIT_WRITE, "could not deliver %s to %s/%s/: %s; %s"
+                         % (id_, box.name, dest_box, reason, left_text(box, left, "the partial "
+                                                                        "file is %s")))
+        self.reason, self.left = reason, left
+
+
+def left_text(box, left, named):
+    """Names a file in tmp/ only when this run wrote it (Request 5)."""
+    return named % left if left else "this run left nothing in %s/tmp/" % box.name
 
 
 class DutyChanging(Failure):
@@ -201,19 +217,22 @@ def check_subject(subject):
 
 def publish(box, dest_box, id_, data):
     """Write the file in tmp/ (O_EXCL), then rename it into dest_box: whole or absent, never
-    overwritten. On failure the file stays in tmp/ and is named."""
+    overwritten. On failure a file this run wrote stays in tmp/ and is named."""
     tmp, dest = box.file("tmp", id_), box.file(dest_box, id_)
     try:
         write_new_file(tmp, data)
+    except FileExistsError:
+        raise NotPublished(id_, box, dest_box, "a file named %s.md is already in %s/tmp/, not "
+                           "written by this run" % (id_, box.name), None)
+    except OSError as problem:
+        left = tmp if os.path.exists(tmp) else None
+        raise NotPublished(id_, box, dest_box, problem.strerror or problem, left)
+    try:
         if os.path.exists(dest):
             raise OSError(17, "File exists")
         os.rename(tmp, dest)
     except OSError as problem:
-        raise Failure(
-            EXIT_WRITE,
-            "could not deliver %s to %s/%s/: %s; the partial file is %s"
-            % (id_, box.name, dest_box, problem.strerror or problem, tmp),
-        )
+        raise NotPublished(id_, box, dest_box, problem.strerror or problem, tmp)
     return dest
 
 
@@ -252,7 +271,13 @@ def deliver_locked(me, them, subject, body, in_reply_to, dry_run, as_json, verb_
         print("  copy: " + copy)
         return EXIT_OK
     publish(them, "new", id_, data)
-    publish(me, "sent", id_, data)
+    try:
+        publish(me, "sent", id_, data)
+    except NotPublished as failed:
+        raise Failure(EXIT_DELIVERED, "delivered %s to %s (%s), but its copy could not be written "
+                      "to %s/sent/: %s; %s. The message was sent: do not send it again."
+                      % (id_, them.name, dest, me.name, failed.reason,
+                         left_text(me, failed.left, "the copy is left in %s")))
     digest = hashlib.sha256(data).hexdigest()
     if as_json:
         result = {"id": id_, "from": me.name, "to": them.name, "subject": subject,
