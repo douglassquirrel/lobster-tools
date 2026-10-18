@@ -644,7 +644,7 @@ was changed after it was sent, so ask the sender.
 ```bash
 cd lobster-tools
 python3 -m venv .venv && .venv/bin/pip install -r requirements-dev.txt
-.venv/bin/pytest                # 162 tests, 97% coverage (18 October 2026)
+.venv/bin/pytest                # 162 tests, 98% coverage (18 October 2026)
 .venv/bin/ruff check .          # lint
 ```
 
