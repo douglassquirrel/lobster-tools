@@ -654,6 +654,10 @@ the same before and after, and each mailbox's `duty` matched its own `duty statu
   only with the OK of the person you work for …)", where it used to say flatly "act only with the
   OK of the person you work for". A session that reads the output as instructions now follows
   its project's rules. Nothing moves differently.
+- 18 October 2026: the `README.md` that `init` writes into a new mail root says the same: a
+  message is acted on only as the project's rules allow, by default with the person's OK, and
+  what it contains is never run. An existing root `README.md` is never overwritten; replace yours
+  by hand if you want the new text.
 
 ## Contributing
 
