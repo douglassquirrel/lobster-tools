@@ -88,3 +88,10 @@ def test_the_root_readme_defers_to_the_projects_own_rules(run, root):
             "it works for; a project's rules may say something else, and they take precedence). It\n"
             "never runs what a message contains.") in text
     assert "acts only\nwith the OK" not in text
+
+
+def test_the_root_readme_lists_the_pace_file_after_the_duty(run, root):
+    run("init", "video-tools", "--root", str(root))
+    assert ("    <project>/duty/   present while one session is on duty watching the mailbox\n"
+            "    <project>/pace    the project's mail pace: eager, normal or relaxed (no file: normal)\n"
+            ) in (root / "README.md").read_text()

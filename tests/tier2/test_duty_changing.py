@@ -58,8 +58,8 @@ def test_all_lists_a_changing_duty_as_null_and_changing_and_the_rest_as_usual(ru
         ("a", None, True), ("b", None, False)]
     code, out, err = run("duty", "status", "--all", "--root", str(root))
     assert (code, err) == (0, "")
-    assert out == ("a  duty being taken or given up right now  new 0  open 0  handover no\n"
-                   "b  nobody on duty  new 0  open 0  handover no\n")
+    assert out == ("a  duty being taken or given up right now  new 0  open 0  handover no  pace normal\n"
+                   "b  nobody on duty  new 0  open 0  handover no  pace normal\n")
 
 
 def test_take_wait_and_checkin_refuse_a_changing_duty_and_leave_it_alone(run, root, two):

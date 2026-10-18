@@ -33,9 +33,9 @@ def test_json_lists_each_mailbox_in_name_order_with_its_counts(run, root, mail_f
     run("ack", "--as", "b", "--root", str(root))
     assert all_json(run, root) == {"root": str(root), "skipped": [], "mailboxes": [
         {"mailbox": "a", "duty": None, "duty_changing": False, "new": 0, "open": 0,
-         "handover_waiting": False},
+         "handover_waiting": False, "pace": "normal"},
         {"mailbox": "b", "duty": None, "duty_changing": False, "new": 2, "open": 1,
-         "handover_waiting": False},
+         "handover_waiting": False, "pace": "normal"},
     ]}
 
 
@@ -102,10 +102,10 @@ def test_without_json_it_prints_one_line_per_mailbox_and_the_skipped_folders(run
     assert (code, err) == (0, "")
     assert out == (
         "a      on duty desk-1, fresh, last beat 2026-10-10T08:55:00Z (5 minutes ago)  "
-        "new 0  open 0  handover no\n"
+        "new 0  open 0  handover no  pace normal\n"
         "b      on duty old-desk, stale, last beat 2026-10-10T07:00:00Z (120 minutes ago)  "
-        "new 0  open 0  handover no\n"
-        "carol  nobody on duty  new 1  open 1  handover waiting\n"
+        "new 0  open 0  handover no  pace normal\n"
+        "carol  nobody on duty  new 1  open 1  handover waiting  pace normal\n"
         "Not mailboxes, skipped: half\n")
 
 
@@ -127,3 +127,13 @@ def test_it_changes_nothing_under_the_root_not_even_a_stale_duty(run, root, mail
     assert snapshot(root) == before
     assert all_json(run, root)["mailboxes"][1]["duty"]["stale"] is True
     assert snapshot(root) == before
+
+
+def test_each_mailbox_shows_its_pace_normal_when_nothing_is_set(run, root, two):
+    run("pace", "eager", "--as", "a", "--root", str(root))
+    assert [(e["mailbox"], e["pace"]) for e in all_json(run, root)["mailboxes"]] == [
+        ("a", "eager"), ("b", "normal")]
+    code, out, _ = run("duty", "status", "--all", "--root", str(root))
+    assert code == 0
+    assert out.splitlines() == ["a  nobody on duty  new 0  open 0  handover no  pace eager",
+                                "b  nobody on duty  new 0  open 0  handover no  pace normal"]

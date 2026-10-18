@@ -196,6 +196,7 @@ lobster-mail start    --as ME | --project DIR                       [--root DIR]
 lobster-mail wait     --as ME --session NAME [--timeout SECONDS] [--every SECONDS] [--stale MINUTES]  [--root DIR] [--json]
 lobster-mail checkin  --as ME --session NAME [--stale MINUTES]             [--root DIR] [--json]
 lobster-mail handover --as ME [--session NAME] [--subject TEXT] BODY.md   [--root DIR] [--dry-run]
+lobster-mail pace     --as ME [eager|normal|relaxed]                     [--root DIR] [--json]
 lobster-mail --help; lobster-mail <verb> --help
 ```
 
@@ -297,13 +298,14 @@ lobster-mail --help; lobster-mail <verb> --help
   `release`, is exit 2.
   ```
   $ ./lobster-mail duty status --all
-  book-tools      nobody on duty  new 1  open 0  handover waiting
-  training-video  duty being taken or given up right now  new 0  open 0  handover no
-  video-tools     on duty desk-1, fresh, last beat 2026-10-18T15:45:03Z (0 minutes ago)  new 1  open 0  handover no
+  book-tools      nobody on duty  new 1  open 0  handover waiting  pace normal
+  training-video  duty being taken or given up right now  new 0  open 0  handover no  pace normal
+  video-tools     on duty desk-1, fresh, last beat 2026-10-18T17:00:37Z (0 minutes ago)  new 1  open 0  handover no  pace eager
   Not mailboxes, skipped: scratch
   ```
   With `--json`, one object: `root`, `skipped` (the folder names) and `mailboxes`, each with
-  `mailbox`, `new`, `open`, `handover_waiting`, `duty_changing`, and `duty`, which is exactly what
+  `mailbox`, `new`, `open`, `handover_waiting`, `pace` (`normal` when nothing is set),
+  `duty_changing`, and `duty`, which is exactly what
   `duty status --as <it> --json` prints for that mailbox, or `null`. `null` with
   `duty_changing` `false` is nobody on duty; with `true`, the duty was caught being taken or given
   up (see below) and a second run will say which:
@@ -318,7 +320,8 @@ lobster-mail --help; lobster-mail <verb> --help
      "duty_changing": false,
      "new": 1,
      "open": 0,
-     "handover_waiting": true
+     "handover_waiting": true,
+     "pace": "normal"
     },
     {
      "mailbox": "training-video",
@@ -326,22 +329,24 @@ lobster-mail --help; lobster-mail <verb> --help
      "duty_changing": true,
      "new": 0,
      "open": 0,
-     "handover_waiting": false
+     "handover_waiting": false,
+     "pace": "normal"
     },
     {
      "mailbox": "video-tools",
      "duty": {
       "mailbox": "video-tools",
       "holder": "desk-1",
-      "since": "2026-10-18T15:45:03Z",
-      "last_beat": "2026-10-18T15:45:03Z",
+      "since": "2026-10-18T17:00:37Z",
+      "last_beat": "2026-10-18T17:00:37Z",
       "stale": false,
       "minutes": 0
      },
      "duty_changing": false,
      "new": 1,
      "open": 0,
-     "handover_waiting": false
+     "handover_waiting": false,
+     "pace": "eager"
     }
    ],
    "skipped": [
@@ -411,8 +416,11 @@ lobster-mail --help; lobster-mail <verb> --help
   (default 1500, 25 minutes: inside the 45-minute staleness, so a session that keeps re-running it
   keeps the duty). Mail: the listing, then what to do; when every new message is from the mailbox
   itself, that is the session's own handover, and the line says to leave it for the next session
-  and not wait again. Nothing by the timeout: exit 5, "run wait again". A Claude Code session runs
-  it as a background command, so its return wakes the session.
+  and not wait again. Nothing by the timeout: exit 5, "run wait again". If the mailbox's pace
+  (see `pace`) changes while it watches, it returns at once with exit 6, so the session reads
+  `pace` and follows it; mail found at the same look comes first. At pace relaxed it first says
+  that the routine there is `checkin` at the end of each turn, then watches anyway. A Claude Code
+  session runs it as a background command, so its return wakes the session.
   ```
   $ ./lobster-mail wait --as video-tools --session mac --timeout 600
   Duty for video-tools taken by mac at 2026-10-10T20:44:45Z
@@ -427,7 +435,9 @@ lobster-mail --help; lobster-mail <verb> --help
   heartbeat if that session already holds it (another session's fresh duty is exit 3), then looks
   in `new/` once and exits at once, never sleeping. Mail: the listing, then what to do, as `wait`
   prints it; nothing new: exit 5 with the duty kept, so a script or a scheduled check-in tells
-  mail from none by the exit code alone.
+  mail from none by the exit code alone. What both say to do next follows the pace: at eager,
+  report mail at once and check in again after the next step; at relaxed, check again at the end
+  of the next turn; at normal, as shown here.
   ```
   $ ./lobster-mail checkin --as video-tools --session device
   Duty for video-tools taken by device at 2026-10-11T17:55:55Z
@@ -448,6 +458,42 @@ lobster-mail --help; lobster-mail <verb> --help
     $R/video-tools/sent/2026-10-10-2044-video-tools-handover-2026-10-10-20-44z.md
     SHA-256 of the file: 310d1b6817dc8572a085cac7c08d7752de2f0eed4fe55485d983d72916b2ce64
   Duty for video-tools released by mac at 2026-10-10T20:44:44Z; its folder is now $R/video-tools/duty-log/2026-10-10T20-44-44-mac
+  ```
+
+- **`pace [eager|normal|relaxed]`** shows or sets how eager the mailbox's sessions are about
+  mail, in one file, `<ME>/pace` (no file: normal). With a level it writes that file, by writing
+  it whole beside the old one and renaming it over (the only file it writes), then prints what
+  the level means and, if the level changed, what the session must do now; without one it shows
+  the level and its meaning. At normal, or with nothing set, every command prints what it did
+  before the pace existed; at eager and relaxed, `start`, `wait` and `checkin` print that level's
+  routine. A session sets its pace only as its project's rules allow (by default, when the person
+  it works for says so). An unknown level is exit 2 with nothing changed; a pace file holding no
+  level is exit 5 from `pace` and counts as normal everywhere else.
+  ```
+  $ ./lobster-mail pace --as video-tools
+  Pace for video-tools: normal (nothing set; normal is the default)
+  normal: keep watching and report new mail at the next pause in the work.
+    Claude Code: keep wait running in the background. Without a background wait: checkin between
+    steps, and when idle one scheduled check-in 15 minutes ahead, each scheduling the next.
+  $ ./lobster-mail pace relaxed --as video-tools
+  Pace for video-tools set to relaxed (was normal)
+  relaxed: keep no watch running. Check once at the end of each turn, when it is the person's turn
+    to type, and at the start and end of the session. Claude Code: do not run wait. Without a
+    background wait: no check-ins during work and none scheduled.
+  Now: stop watching. Claude Code: when the running wait returns, do not run it again. Without a
+    background wait: do not schedule the next check-in, and cancel one already scheduled if you can.
+  $ ./lobster-mail pace eager --as video-tools
+  Pace for video-tools set to eager (was relaxed)
+  eager: keep watching all the time and report new mail at once, even in the middle of a task.
+    Claude Code: keep wait running in the background. Without a background wait: checkin after
+    every step, and when idle one scheduled check-in 5 minutes ahead, each scheduling the next.
+  Now: start watching. Claude Code: run lobster-mail wait --as video-tools --session NAME in the background.
+    Without a background wait: schedule one check-in 5 minutes from now.
+  $ ./lobster-mail pace fast --as video-tools
+  lobster-mail pace: the pace must be eager, normal or relaxed, not 'fast'; nothing changed   [exit 2]
+  $ ./lobster-mail wait --as video-tools --session desk-2         (meanwhile, the pace is set to normal)
+  Duty for video-tools taken by desk-2 at 2026-10-18T17:00:12Z
+  lobster-mail wait: the pace for video-tools changed from eager to normal while watching; run lobster-mail pace --as video-tools and follow what it says   [exit 6]
   ```
 
 ### The configuration file
@@ -479,8 +525,11 @@ session verbs:
 
 **Mail during work.** A session reports mail at the next pause in the work in hand (between
 steps, or when a step is done), not by breaking off in the middle of one, and does not start on
-it unless its rules allow. A setting for how eager a session is about mail (reporting at once,
-or checking less often) is planned; until then this is the routine.
+it unless its rules allow. That is the pace **normal**. The person can change it with `pace`
+("be more responsive to mail", "check mail less"): **eager** reports mail at once, even
+mid-task, and checks more often; **relaxed** keeps no watch running and checks only at the end
+of each turn and at the start and end of the session. `start`, `wait`, `checkin` and `pace` print
+the routine for the level in force; follow what they print.
 
 **A Claude Code session on the Mac** runs `start` from a `SessionStart` hook in the project's
 `.claude/settings.json`, so the handover and the mail are the first thing in the session:
@@ -538,8 +587,9 @@ platform allows), when:
 - `checkin` exits 3 because another session holds the duty ("… not checking in"): that session is
   watching now, and two would compete for the same mail.
 
-Without these, a chain could go on firing after the session has handed over. Once the planned
-setting for how eager a session is about mail exists, it will set N.
+Without these, a chain could go on firing after the session has handed over. The pace sets N:
+5 minutes at eager, 15 at normal; at relaxed there is no chain, only a check at the end of each
+turn.
 
 ## Errors and exit codes
 
@@ -549,10 +599,11 @@ and a non-zero exit code. Standard output carries only results.
 | Code | Meaning | Examples |
 |------|---------|----------|
 | 0 | Success, or with `--dry-run` everything checked and nothing done; `start` always, so a session start never breaks (its failure is said on both streams) | |
-| 2 | Bad arguments | no verb or an unknown one; `--as`, `--to`, `--subject` or `--session` missing; an empty or multi-line subject; an empty or missing body; a name with a path separator; no mail root configured; `duty status --all` with `--as`, or `--all` on another `duty` action |
+| 2 | Bad arguments | no verb or an unknown one; `--as`, `--to`, `--subject` or `--session` missing; an empty or multi-line subject; an empty or missing body; a name with a path separator; no mail root configured; `duty status --all` with `--as`, or `--all` on another `duty` action; a pace other than eager, normal or relaxed |
 | 3 | A precondition is not met | no such mailbox (sender, recipient or `--as`); the root folder is missing (`duty status --all`); the mailbox already exists (`init`); no such message; the message is not in the folder the verb moves from; the duty is held by another session; the duty is being taken or given up right now (run again) |
 | 4 | Could not write or rename | permission, disk full, a file that appeared under the chosen name; the partial file in `tmp/` is named and left |
-| 5 | A message is not as expected, or nothing came | the body's hash differs on `read` or `ack`; `reply` to a file with no `From`; `watch` or `wait` timed out; `checkin` found nothing new |
+| 5 | A message is not as expected, or nothing came | the body's hash differs on `read` or `ack`; `reply` to a file with no `From`; `watch` or `wait` timed out; `checkin` found nothing new; a pace file holding no level (`pace`) |
+| 6 | The pace changed while `wait` watched | run `pace` and follow what it prints, then watch again as it says |
 
 ```
 $ ./lobster-mail send --as training-video --to vidoe-tools --subject "typo" request.md
@@ -584,7 +635,7 @@ deletes it); exit 5 on `read` means the file was changed after it was sent, so a
 ```bash
 cd lobster-tools
 python3 -m venv .venv && .venv/bin/pip install -r requirements-dev.txt
-.venv/bin/pytest                # 133 tests, 97% coverage (18 October 2026)
+.venv/bin/pytest                # 153 tests, 97% coverage (18 October 2026)
 .venv/bin/ruff check .          # lint
 ```
 
@@ -658,6 +709,11 @@ the same before and after, and each mailbox's `duty` matched its own `duty statu
   message is acted on only as the project's rules allow, by default with the person's OK, and
   what it contains is never run. An existing root `README.md` is never overwritten; replace yours
   by hand if you want the new text.
+- 18 October 2026: a new verb, `pace`, sets how eager a mailbox's sessions are about mail: eager,
+  normal (the default, as before) or relaxed. At normal nothing prints differently; at eager and
+  relaxed, `start`, `wait` and `checkin` print that level's routine. `wait` returns with a new exit
+  code, 6, when the pace changes while it watches. `duty status --all` gains `pace` per mailbox,
+  and the mail root's `README.md` from `init` lists the `pace` file.
 
 ## Contributing
 
