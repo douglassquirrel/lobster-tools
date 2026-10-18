@@ -577,7 +577,50 @@ def write_heartbeat(box, beat):
     os.rename(fresh, os.path.join(duty, "heartbeat"))
 
 
+def cmd_duty_all(args):
+    """duty status --all: every mailbox under the root, its duty and what waits. Reads only."""
+    root = resolve_root(args)
+    if not os.path.isdir(root):
+        raise Failure(EXIT_PRECONDITION, "the mail root %s does not exist (lobster-mail init NAME "
+                      "makes it and a first mailbox)" % root)
+    now = clock()
+    found, skipped = [], []
+    for name in sorted(os.listdir(root)):
+        box = Mailbox(root, name)
+        if name.startswith(".") or not os.path.isdir(box.path):
+            continue
+        if not box.exists():
+            skipped.append(name)
+            continue
+        waiting = entries(box, "new")
+        found.append({"mailbox": name, "duty": duty_state(box, now, args.stale),
+                      "new": len(waiting), "open": len(entries(box, "open")),
+                      "handover_waiting": any(e["from"] == name for e in waiting)})
+    if args.json:
+        print(json.dumps({"root": root, "mailboxes": found, "skipped": skipped}, indent=1))
+        return EXIT_OK
+    if not found:
+        print("No mailboxes in %s" % root)
+    width = max([len(e["mailbox"]) for e in found] + [0])
+    for entry in found:
+        duty = entry["duty"]
+        if duty is None:
+            who = "nobody on duty"
+        else:
+            who = "on duty %s, %s, last beat %s (%d minutes ago)" % (
+                duty["holder"], "stale" if duty["stale"] else "fresh", duty["last_beat"],
+                duty["minutes"])
+        print("%s  %s  new %d  open %d  handover %s" % (
+            entry["mailbox"].ljust(width), who, entry["new"], entry["open"],
+            "waiting" if entry["handover_waiting"] else "no"))
+    if skipped:
+        print("Not mailboxes, skipped: %s" % ", ".join(skipped))
+    return EXIT_OK
+
+
 def cmd_duty(args):
+    if args.all:
+        return cmd_duty_all(args)
     if args.action != "status":
         check_name(args.session, "--session")  # it names the folder in duty-log/
     box = mailbox(resolve_root(args), args.me, "--as")
@@ -868,6 +911,8 @@ def build_parser():
     sub = verb("duty", "take, keep, release or show the duty of watching a mailbox")
     sub.add_argument("action", choices=["take", "beat", "release", "status"])
     sub.add_argument("--session", metavar="NAME", help="the session taking or holding the duty")
+    sub.add_argument("--all", action="store_true",
+                     help="status only: every mailbox under the root, instead of --as")
     sub.add_argument(
         "--stale", type=float, default=45, metavar="MINUTES", help="a heartbeat older than this is stale"
     )
@@ -911,7 +956,11 @@ def main(argv=None, stdin=None):
         parser.print_usage(sys.stderr)
         print("lobster-mail: a verb is needed: " + ", ".join(VERBS), file=sys.stderr)
         return 2
-    if hasattr(args, "me") and not args.me:
+    if getattr(args, "all", False) and args.action != "status":
+        parser.error("--all is only for duty status")
+    if getattr(args, "all", False) and args.me:
+        parser.error("duty status takes --all or --as NAME, not both")
+    if hasattr(args, "me") and not args.me and not getattr(args, "all", False):
         if getattr(args, "project", None):
             args.me = project_name(args.project)
         else:

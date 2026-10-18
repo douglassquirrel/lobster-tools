@@ -191,6 +191,7 @@ lobster-mail done   ID --as ME                            [--root DIR] [--dry-ru
 lobster-mail thread ID --as ME                            [--root DIR] [--json]
 lobster-mail watch  --as ME [--timeout SECONDS] [--every SECONDS]   [--root DIR] [--json]
 lobster-mail duty   take|beat|release|status --as ME --session NAME [--stale MINUTES]  [--root DIR] [--json]
+lobster-mail duty   status --all [--stale MINUTES]                           [--root DIR] [--json]
 lobster-mail start    --as ME | --project DIR                       [--root DIR]
 lobster-mail wait     --as ME --session NAME [--timeout SECONDS] [--every SECONDS] [--stale MINUTES]  [--root DIR] [--json]
 lobster-mail checkin  --as ME --session NAME [--stale MINUTES]             [--root DIR] [--json]
@@ -284,6 +285,64 @@ lobster-mail --help; lobster-mail <verb> --help
   lobster-mail duty: duty for video-tools is held by desk-1 (last beat 2026-10-10T12:23:47Z, 0 minutes ago); take it when the heartbeat is older than 45 minutes
   $ ./lobster-mail duty release --as video-tools --session desk-1
   Duty for video-tools released by desk-1 at 2026-10-10T12:23:47Z; its folder is now $R/video-tools/duty-log/2026-10-10T12-23-47-desk-1
+  ```
+- **`duty status --all`**, in place of `--as`, answers for every mailbox under the root at once:
+  who is on duty (fresh or stale), how many messages are in `new/` and `open/`, and whether a
+  handover from the mailbox to itself is waiting in `new/` (what the next `start` there will read
+  first). Mailboxes come in name order; a folder that is not a whole mailbox is skipped and named
+  on the last line; plain files and names starting with `.` are ignored. It **only reads**: a
+  stale duty is reported as stale and left where it is, never retired, and nothing is moved.
+  Exit 0 whatever it finds, an empty root included (`No mailboxes in ROOT`); a missing root folder
+  is exit 3. `--stale` works as for `status`. `--all` with `--as`, or on `take`, `beat` or
+  `release`, is exit 2.
+  ```
+  $ ./lobster-mail duty status --all
+  book-tools      nobody on duty  new 1  open 0  handover waiting
+  training-video  nobody on duty  new 0  open 0  handover no
+  video-tools     on duty desk-1, fresh, last beat 2026-10-18T15:10:54Z (0 minutes ago)  new 1  open 0  handover no
+  Not mailboxes, skipped: scratch
+  ```
+  With `--json`, one object: `root`, `skipped` (the folder names) and `mailboxes`, each with
+  `mailbox`, `new`, `open`, `handover_waiting`, and `duty`, which is exactly what
+  `duty status --as <it> --json` prints for that mailbox, or `null` when nobody is on duty:
+  ```
+  $ ./lobster-mail duty status --all --json
+  {
+   "root": "$R",
+   "mailboxes": [
+    {
+     "mailbox": "book-tools",
+     "duty": null,
+     "new": 1,
+     "open": 0,
+     "handover_waiting": true
+    },
+    {
+     "mailbox": "training-video",
+     "duty": null,
+     "new": 0,
+     "open": 0,
+     "handover_waiting": false
+    },
+    {
+     "mailbox": "video-tools",
+     "duty": {
+      "mailbox": "video-tools",
+      "holder": "desk-1",
+      "since": "2026-10-18T15:10:54Z",
+      "last_beat": "2026-10-18T15:10:54Z",
+      "stale": false,
+      "minutes": 0
+     },
+     "new": 1,
+     "open": 0,
+     "handover_waiting": false
+    }
+   ],
+   "skipped": [
+    "scratch"
+   ]
+  }
   ```
 - **`start`** is what a session reads first, and what a Claude Code `SessionStart` hook runs. It
   claims, prints and closes the previous session's handover (every message in `new/` from the
@@ -418,8 +477,8 @@ and a non-zero exit code. Standard output carries only results.
 | Code | Meaning | Examples |
 |------|---------|----------|
 | 0 | Success, or with `--dry-run` everything checked and nothing done; `start` always, so a session start never breaks (its failure is said on both streams) | |
-| 2 | Bad arguments | no verb or an unknown one; `--as`, `--to`, `--subject` or `--session` missing; an empty or multi-line subject; an empty or missing body; a name with a path separator; no mail root configured |
-| 3 | A precondition is not met | no such mailbox (sender, recipient or `--as`); the mailbox already exists (`init`); no such message; the message is not in the folder the verb moves from; the duty is held by another session |
+| 2 | Bad arguments | no verb or an unknown one; `--as`, `--to`, `--subject` or `--session` missing; an empty or multi-line subject; an empty or missing body; a name with a path separator; no mail root configured; `duty status --all` with `--as`, or `--all` on another `duty` action |
+| 3 | A precondition is not met | no such mailbox (sender, recipient or `--as`); the root folder is missing (`duty status --all`); the mailbox already exists (`init`); no such message; the message is not in the folder the verb moves from; the duty is held by another session |
 | 4 | Could not write or rename | permission, disk full, a file that appeared under the chosen name; the partial file in `tmp/` is named and left |
 | 5 | A message is not as expected, or nothing came | the body's hash differs on `read` or `ack`; `reply` to a file with no `From`; `watch` or `wait` timed out; `checkin` found nothing new |
 
@@ -453,7 +512,7 @@ deletes it); exit 5 on `read` means the file was changed after it was sent, so a
 ```bash
 cd lobster-tools
 python3 -m venv .venv && .venv/bin/pip install -r requirements-dev.txt
-.venv/bin/pytest                # 116 tests, 97% coverage (11 October 2026)
+.venv/bin/pytest                # 126 tests, 97% coverage (18 October 2026)
 .venv/bin/ruff check .          # lint
 ```
 
@@ -467,7 +526,9 @@ exactly the two it says; a hostile body comes back byte for byte.
 Checked by hand against the real thing (10 October 2026): a full exchange on the Mac; the same
 from a Linux shell whose home folder is a mount of the Mac's, where the claim, the delivery and
 the heartbeat rename all worked and every file's hash was identical from both sides; a `watch` on
-that shell listed a message sent from the Mac within a second.
+that shell listed a message sent from the Mac within a second. And (18 October 2026)
+`duty status --all` on the real mail root, text and JSON: every file and folder under it hashed
+the same before and after, and each mailbox's `duty` matched its own `duty status --as`.
 
 ## Known limitations and non-goals
 
@@ -501,6 +562,9 @@ that shell listed a message sent from the Mac within a second.
   exit at once (0: mail, 5: nothing new) — for a session that cannot run a background `wait`,
   such as one working through the device shell, whose every call is cut off at 180 seconds. See
   "For a Claude session". `start`'s instructions now name it beside `wait`.
+- 18 October 2026: `duty status --all` lists every mailbox under the root at once, with who is on
+  duty, the counts in `new/` and `open/`, and whether a handover is waiting; read-only. With
+  `--json`, each mailbox's `duty` is the same object `duty status --as` prints.
 
 ## Contributing
 
