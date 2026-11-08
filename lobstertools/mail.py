@@ -769,6 +769,42 @@ OWN_HANDOVER = ("Only this mailbox's own handover is waiting; it is for the next
                 "claim it, and do not %s again.")
 
 
+FROM_HELP = ("count only mail from this mailbox (repeat for more); mail from others is left in new/ "
+             "and only counted")
+
+
+def check_senders(args):
+    """Check each --from name as a mailbox name, and keep each once, in the order given."""
+    for name in args.senders or []:
+        check_name(name, "--from")
+    args.senders = list(dict.fromkeys(args.senders or []))
+
+
+def new_mail(box, senders):
+    """What is in new/, split into the mail that counts and the number of other messages: with
+    --from, only mail whose From is one of the senders counts; without it, all of it does."""
+    found = entries(box, "new")
+    if not senders:
+        return found, 0
+    counted = [entry for entry in found if entry["from"] in senders]
+    return counted, len(found) - len(counted)
+
+
+def others_text(others, senders):
+    """'2 other messages are waiting, not from bernstein; left unclaimed'."""
+    return "%d other message%s waiting, not from %s; left unclaimed" % (
+        others, " is" if others == 1 else "s are", " or ".join(senders))
+
+
+def nothing_from(box, senders, others, after=""):
+    """The start of the exit-5 message: 'No new mail for b' or, with --from, 'No new mail from
+    bernstein for b', with the others counted in brackets when there are any."""
+    if not senders:
+        return "No new mail for %s%s" % (box.name, after)
+    text = "No new mail from %s for %s%s" % (" or ".join(senders), box.name, after)
+    return text + (" (%s)" % others_text(others, senders) if others else "")
+
+
 def take_duty_or_fail(args, box, doing):
     """Take or keep the duty for wait and checkin, printing its lines unless --json; another
     session's fresh duty becomes 'not watching' / 'not checking in'."""
@@ -782,15 +818,20 @@ def take_duty_or_fail(args, box, doing):
     return action
 
 
-def report_arrivals(args, box, action, found, again, level="normal"):
+def report_arrivals(args, box, action, found, again, level="normal", others=0):
     """The tail wait and checkin share: the mail listed, and what to do with it, text or JSON."""
     own_only = all(entry["from"] == box.name for entry in found)
     if args.json:
-        print(json.dumps({"mailbox": box.name, "session": args.session, "duty": action,
-                          "mail": found, "own_handover_only": own_only}, indent=1))
+        result = {"mailbox": box.name, "session": args.session, "duty": action, "mail": found,
+                  "own_handover_only": own_only}
+        if args.senders:
+            result.update({"from": args.senders, "other_waiting": others})
+        print(json.dumps(result, indent=1))
         return EXIT_OK
     for entry in found:
         print(line(entry))
+    if others:
+        print(others_text(others, args.senders))
     arrived = ARRIVED_EAGER if level == "eager" else ARRIVED
     print(OWN_HANDOVER % again if own_only else arrived % (box.name, again))
     return EXIT_OK
@@ -799,6 +840,7 @@ def report_arrivals(args, box, action, found, again, level="normal"):
 def cmd_wait(args):
     """The watch with the duty: take or keep the duty, wait for mail, say what to do with it."""
     check_name(args.session, "--session")
+    check_senders(args)
     box = mailbox(resolve_root(args), args.me, "--as")
     level = pace_level(box)
     if level == "relaxed" and not args.json:
@@ -806,9 +848,10 @@ def cmd_wait(args):
     action = take_duty_or_fail(args, box, "watching")
     pace = read_pace(box)
     changed = []
+    others = [0]
 
     def look():
-        found = entries(box, "new")
+        found, others[0] = new_mail(box, args.senders)
         if not found and read_pace(box) != pace:
             changed.append(read_pace(box))
         return found or changed
@@ -819,22 +862,24 @@ def cmd_wait(args):
                       "lobster-mail pace --as %s and follow what it says"
                       % (box.name, pace or "normal", changed[0] or "normal", box.name))
     if found is None:
-        raise Failure(EXIT_UNEXPECTED, "No new mail for %s after %g seconds; run wait again to keep "
-                      "watching" % (box.name, args.timeout))
-    return report_arrivals(args, box, action, found, "wait", level)
+        raise Failure(EXIT_UNEXPECTED, "%s; run wait again to keep watching" % nothing_from(
+            box, args.senders, others[0], " after %g seconds" % args.timeout))
+    return report_arrivals(args, box, action, found, "wait", level, others[0])
 
 
 def cmd_checkin(args):
     """One look with the duty, exiting at once and never sleeping: for a session that cannot keep
     wait running (each call foreground and cut off, as in the device shell)."""
     check_name(args.session, "--session")
+    check_senders(args)
     box = mailbox(resolve_root(args), args.me, "--as")
     action = take_duty_or_fail(args, box, "checking in")
     level = pace_level(box)
-    found = entries(box, "new")
+    found, others = new_mail(box, args.senders)
     if not found:
-        raise Failure(EXIT_UNEXPECTED, "No new mail for %s; %s" % (box.name, NOTHING_NEW[level]))
-    return report_arrivals(args, box, action, found, "check in", level)
+        raise Failure(EXIT_UNEXPECTED, "%s; %s" % (nothing_from(box, args.senders, others),
+                                                   NOTHING_NEW[level]))
+    return report_arrivals(args, box, action, found, "check in", level, others)
 
 
 PACE_MEANING = {
@@ -1148,6 +1193,7 @@ def build_parser():
     sub.add_argument(
         "--stale", type=float, default=45, metavar="MINUTES", help="a heartbeat older than this is stale"
     )
+    sub.add_argument("--from", dest="senders", action="append", metavar="NAME", help=FROM_HELP)
 
     sub = verb("checkin", "take the duty (or keep it), look once for mail, and exit at once "
                "(0: mail, 5: nothing new)")
@@ -1156,6 +1202,8 @@ def build_parser():
     sub.add_argument(
         "--stale", type=float, default=45, metavar="MINUTES", help="a heartbeat older than this is stale"
     )
+
+    sub.add_argument("--from", dest="senders", action="append", metavar="NAME", help=FROM_HELP)
 
     sub = verb("handover", "leave a note for the next session in this mailbox, and give up the duty",
                json_=False, dry_run=True)

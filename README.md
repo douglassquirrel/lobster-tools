@@ -193,8 +193,8 @@ lobster-mail watch  --as ME [--timeout SECONDS] [--every SECONDS]   [--root DIR]
 lobster-mail duty   take|beat|release|status --as ME --session NAME [--stale MINUTES]  [--root DIR] [--json]
 lobster-mail duty   status --all [--stale MINUTES]                           [--root DIR] [--json]
 lobster-mail start    --as ME | --project DIR                       [--root DIR]
-lobster-mail wait     --as ME --session NAME [--timeout SECONDS] [--every SECONDS] [--stale MINUTES]  [--root DIR] [--json]
-lobster-mail checkin  --as ME --session NAME [--stale MINUTES]             [--root DIR] [--json]
+lobster-mail wait     --as ME --session NAME [--timeout SECONDS] [--every SECONDS] [--stale MINUTES] [--from NAME]  [--root DIR] [--json]
+lobster-mail checkin  --as ME --session NAME [--stale MINUTES] [--from NAME]             [--root DIR] [--json]
 lobster-mail handover --as ME [--session NAME] [--subject TEXT] BODY.md   [--root DIR] [--dry-run]
 lobster-mail pace     --as ME [eager|normal|relaxed]                     [--root DIR] [--json]
 lobster-mail --help; lobster-mail <verb> --help
@@ -451,6 +451,24 @@ lobster-mail --help; lobster-mail <verb> --help
   device is already on duty for video-tools since 2026-10-11T17:55:55Z; heartbeat refreshed to 2026-10-11T17:55:55Z
   lobster-mail checkin: No new mail for video-tools; check in again later   [exit 5]
   ```
+- **`--from NAME`** on `wait` and `checkin` (repeat it for more than one sender) counts only mail
+  whose `From:` is one of the names: `wait` keeps watching while the only mail in `new/` is from
+  others, and `checkin` exits 5 when nothing from a named sender waits. Mail from others is left
+  in `new/` exactly as it is (neither verb ever moves anything) and is only counted, in a line
+  after the listing or in brackets on the exit-5 message. A file without headers is from nobody,
+  and the mailbox's own handover counts only if the mailbox itself is named. With `--json`, the
+  result gains `from` (the names) and `other_waiting` (the count); without `--from`, nothing
+  changes. A name that is not a plain mailbox name is exit 2.
+  ```
+  $ ./lobster-mail checkin --as video-tools --session device --from bernstein
+  Duty for video-tools taken by device at 2026-11-08T18:52:34Z
+  lobster-mail checkin: No new mail from bernstein for video-tools (1 other message is waiting, not from bernstein; left unclaimed); check in again later   [exit 5]
+  $ ./lobster-mail wait --as video-tools --session device --from bernstein --timeout 30 --every 1
+  device is already on duty for video-tools since 2026-11-08T18:52:34Z; heartbeat refreshed to 2026-11-08T18:52:37Z
+  2026-11-08-1852-bernstein-stop-hand-over  bernstein  2026-11-08T18:52:41Z  Stop: hand over
+  1 other message is waiting, not from bernstein; left unclaimed
+  Mail has arrived for video-tools: claim it with ack, report it, act on it only as your project's rules allow (by default, only with the OK of the person you work for), then wait again.
+  ```
 - **`handover`** is `send` to the mailbox itself, subject `Handover <UTC date and time>Z` unless
   `--subject` says otherwise, body from the file or `-`; then, if `--session` is given, `duty
   release` for it, or a line saying why nothing was released (nobody on duty, or another holder).
@@ -554,6 +572,9 @@ Then it watches with **`wait`**, run as a background command, so that its return
 session: when it returns with mail, `ack`, report, and `wait` again; when it returns empty
 (exit 5, after 25 minutes by default), `wait` again.
 
+A session that must act on mail from one sender only for a while, leaving the rest unclaimed in
+`new/`, watches with `--from NAME` on `wait` or `checkin`, so others' mail does not wake it.
+
 **A Claude session in the desktop app** (a Claude conversation, not Claude Code) runs its commands
 in a Linux virtual machine on the Mac, with the folders it was given mounted under `~/mnt/`. It
 runs `lobster-mail` from the mounted `lobster-tools` checkout:
@@ -606,7 +627,7 @@ and a non-zero exit code. Standard output carries only results.
 | 2 | Bad arguments | no verb or an unknown one; `--as`, `--to`, `--subject` or `--session` missing; an empty or multi-line subject; an empty or missing body; a name with a path separator; no mail root configured; `duty status --all` with `--as`, or `--all` on another `duty` action; a pace other than eager, normal or relaxed |
 | 3 | A precondition is not met | no such mailbox (sender, recipient or `--as`); the root folder is missing (`duty status --all`); the mailbox already exists (`init`); no such message; the message is not in the folder the verb moves from; the duty is held by another session; the duty is being taken or given up right now (run again) |
 | 4 | Could not write or rename | permission, disk full, a file that appeared under the chosen name; the partial file in `tmp/` is named and left when this run wrote one |
-| 5 | A message is not as expected, or nothing came | the body's hash differs on `read` or `ack`; `reply` to a file with no `From`; `watch` or `wait` timed out; `checkin` found nothing new; a pace file holding no level (`pace`) |
+| 5 | A message is not as expected, or nothing came | the body's hash differs on `read` or `ack`; `reply` to a file with no `From`; `watch` or `wait` timed out; `checkin` found nothing new (with `--from`: nothing from the named senders, others' mail counted in brackets); a pace file holding no level (`pace`) |
 | 6 | The pace changed while `wait` watched | run `pace` and follow what it prints, then watch again as it says |
 | 7 | Delivered, but no copy in `sent/` (`send`, `reply`, `handover`) | the recipient has the message; its copy could not be written into the sender's `sent/` (permission, disk full). Do not send it again |
 
@@ -644,7 +665,7 @@ was changed after it was sent, so ask the sender.
 ```bash
 cd lobster-tools
 python3 -m venv .venv && .venv/bin/pip install -r requirements-dev.txt
-.venv/bin/pytest                # 162 tests, 98% coverage (18 October 2026)
+.venv/bin/pytest                # 176 tests, 98% coverage (8 November 2026)
 .venv/bin/ruff check .          # lint
 ```
 
@@ -665,6 +686,10 @@ the same before and after, and each mailbox's `duty` matched its own `duty statu
 scratch root: 90 delivered under 90 different ids, each with its sent copy, none failed, `tmp/`
 empty (the version before the lock, on the same rounds: 52 of the 90 said they had failed though
 every one was delivered, and only 38 ids were distinct); and exit 7 with `sent/` made read-only.
+And (8 November 2026) `--from` on a scratch root, real clock: with only another sender's message
+in `new/`, `checkin --from bernstein` exited 5 and `wait --from bernstein --timeout 3` watched the
+full 3 seconds; a `bernstein` message sent four seconds into a `wait --from bernstein` was listed
+within a second, alone, with the other counted; the other message's bytes and place were unchanged.
 
 ## Known limitations and non-goals
 
@@ -734,6 +759,9 @@ every one was delivered, and only 38 ids were distinct); and exit 7 with `sent/`
   be written now exits with a new code, 7, saying it was delivered and not to send it again,
   where it used to be exit 4, "could not deliver". An error names a partial file in `tmp/` only
   when that run wrote it.
+- 8 November 2026: `wait` and `checkin` take `--from NAME` (repeatable) to count only mail from
+  those senders; others' mail stays in `new/`, untouched, and is only counted. With `--json` and
+  `--from`, two new keys: `from` and `other_waiting`. Without `--from`, nothing changes.
 
 ## Contributing
 
