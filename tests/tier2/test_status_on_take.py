@@ -114,3 +114,35 @@ def test_wait_and_checkin_json_carry_reported_or_null(run, root, mail_for_b):
         _, out, _ = watch(run, root, verb, "--json")
         assert json.loads(out)["reported"] == {
             "status": "dormant", "set": "2026-10-10T09:00:00Z", "until": None}, verb
+
+
+STEP0 = ('0. A status is being reported for b: "%s", set by mac at 2026-10-10T09:00:00Z%s. A session '
+         "that has just started clears it unless it set it itself:\n"
+         "   lobster-mail status --as b --session mac --clear\n")
+
+
+def start(run, root):
+    code, out, err = run("start", "--as", "b", "--root", str(root))
+    assert (code, err) == (0, "")
+    return out
+
+
+def test_start_with_a_status_on_the_duty_says_to_clear_it_unless_set_by_this_session(run, root,
+                                                                                    two):
+    take(run, root)
+    set_status(run, root, "dormant", "--until", UNTIL)
+    out = start(run, root)
+    assert ("== What to do now ==\n" + STEP0 % ("dormant", " (until 2026-10-10T10:30:00Z)")
+            + "1. Read the project's guidance") in out
+    assert shown(run, root).startswith('Status for b: "dormant"')
+
+
+def test_start_with_no_status_prints_as_before(run, root, two):
+    take(run, root)
+    set_status(run, root, "dreaming")
+    with_status = start(run, root)
+    run("status", "--as", "b", "--session", "mac", "--clear", "--root", str(root))
+    without = start(run, root)
+    assert "0. " not in without
+    assert without == (with_status.replace(STEP0 % ("dreaming", ""), "")
+                       .replace('; reporting "dreaming" since 2026-10-10T09:00:00Z', ""))
