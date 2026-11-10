@@ -291,3 +291,13 @@ def test_status_never_touches_a_message(run, root, mail_for_b):
     status(run, root)
     status(run, root, "--session", "desk", "--clear")
     assert every_file(root) == before
+
+
+def test_help_lists_status_and_its_own_help_names_every_option(run):
+    code, out, _ = run("--help")
+    assert code == 0 and "status" in out.split("positional arguments")[1]
+    code, out, _ = run("status", "--help")
+    assert code == 0
+    assert out.startswith("usage: lobster-mail status")
+    for option in ("TEXT", "--session NAME", "--until TIME", "--clear", "--json", "--as ME"):
+        assert option in out, option

@@ -197,6 +197,7 @@ lobster-mail wait     --as ME --session NAME [--timeout SECONDS] [--every SECOND
 lobster-mail checkin  --as ME --session NAME [--stale MINUTES] [--from NAME]             [--root DIR] [--json]
 lobster-mail handover --as ME [--session NAME] [--subject TEXT] BODY.md   [--root DIR] [--dry-run]
 lobster-mail pace     --as ME [eager|normal|relaxed]                     [--root DIR] [--json]
+lobster-mail status   --as ME [--session NAME] [TEXT [--until TIME] | --clear]  [--root DIR] [--json]
 lobster-mail --help; lobster-mail <verb> --help
 ```
 
@@ -205,7 +206,8 @@ lobster-mail --help; lobster-mail <verb> --help
   `~/.lobster-tools.conf`, else `~/mnt/mail` if that folder exists: a Linux shell that mounts the
   Mac's mail folder there needs no flag and no setting, which matters because the mount path
   changes between sessions and must not be stored.
-- `--session NAME`: this session's name for the duty (`duty`, `wait`, `checkin`, `handover`). Also
+- `--session NAME`: this session's name for the duty (`duty`, `wait`, `checkin`, `handover`,
+  `status`). Also
   `LOBSTER_MAIL_SESSION`.
 - `BODY.md`: a file, or `-` for standard input. The file is read, never modified.
 - `--subject TEXT`: one line, not empty. On `reply` the default is `Re: ` and the original's
@@ -309,7 +311,8 @@ lobster-mail --help; lobster-mail <verb> --help
   ```
   With `--json`, one object: `root`, `skipped` (the folder names) and `mailboxes`, each with
   `mailbox`, `new`, `open`, `handover_waiting`, `pace` (`normal` when nothing is set),
-  `duty_changing`, and `duty`, which is exactly what
+  `duty_changing`, `reported` (the status the session on duty reports, or `null`; see `status`),
+  and `duty`, which is exactly what
   `duty status --as <it> --json` prints for that mailbox, or `null`. `null` with
   `duty_changing` `false` is nobody on duty; with `true`, the duty was caught being taken or given
   up (see below) and a second run will say which:
@@ -325,7 +328,8 @@ lobster-mail --help; lobster-mail <verb> --help
      "new": 1,
      "open": 0,
      "handover_waiting": true,
-     "pace": "normal"
+     "pace": "normal",
+     "reported": null
     },
     {
      "mailbox": "training-video",
@@ -334,7 +338,8 @@ lobster-mail --help; lobster-mail <verb> --help
      "new": 0,
      "open": 0,
      "handover_waiting": false,
-     "pace": "normal"
+     "pace": "normal",
+     "reported": null
     },
     {
      "mailbox": "video-tools",
@@ -344,13 +349,15 @@ lobster-mail --help; lobster-mail <verb> --help
       "since": "2026-10-18T17:00:37Z",
       "last_beat": "2026-10-18T17:00:37Z",
       "stale": false,
-      "minutes": 0
+      "minutes": 0,
+      "reported": null
      },
      "duty_changing": false,
      "new": 1,
      "open": 0,
      "handover_waiting": false,
-     "pace": "eager"
+     "pace": "eager",
+     "reported": null
     }
    ],
    "skipped": [
@@ -367,6 +374,34 @@ lobster-mail --help; lobster-mail <verb> --help
   ```
   $ ./lobster-mail duty status --as training-video
   lobster-mail duty: the duty of training-video is being taken or given up right now; run again
+  ```
+- **`status [TEXT]`** is a short status the session on duty reports about itself, such as
+  `dreaming` or `dormant`, with `--until TIME` if it expects to finish by then. The tool gives it
+  no meaning: it stores it and shows it. `status --as ME` alone shows it (no `--session` needed);
+  `status --as ME --session NAME TEXT` sets it and `--clear` clears it, and only the session that
+  holds the duty may do either, fresh or stale (otherwise exit 3, nothing changed). The text is one
+  line of 1 to 60 characters with no control characters; `--until` is a UTC time with `Z` or an
+  offset (stored as `Z`), past or future (otherwise exit 2). Setting it does not beat the heartbeat.
+  It is kept as `duty/status`, rewritten by rename like the heartbeat (`--clear` writes `{}`, nothing
+  is deleted), so it goes with the duty: a handover, a release or a takeover moves it into
+  `duty-log/` and the next holder starts with none. A stale duty keeps its status, and a status past
+  its `until` is shown as it was set. `duty status` shows it after the duty (`; reporting
+  "dreaming" since …`), and its JSON, with `--as` or `--all`, carries it as `reported` (`null` when
+  there is none). `--json` on `status` prints `mailbox`, `holder` and `reported`, and `action` when
+  it sets or clears.
+  ```
+  $ ./lobster-mail status --as video-tools --session desk-1 dreaming --until 2026-11-10T16:42:15Z
+  Status for video-tools set by desk-1 at 2026-11-10T15:42:15Z: "dreaming", until 2026-11-10T16:42:15Z
+  $ ./lobster-mail status --as video-tools
+  Status for video-tools: "dreaming", set by desk-1 at 2026-11-10T15:42:15Z, until 2026-11-10T16:42:15Z
+  $ ./lobster-mail duty status --as video-tools
+  video-tools: on duty desk-1 since 2026-11-10T15:42:15Z; last beat 2026-11-10T15:42:15Z (fresh, 0 minutes ago); reporting "dreaming" since 2026-11-10T15:42:15Z (until 2026-11-10T16:42:15Z)
+  $ ./lobster-mail status --as video-tools --session desk-2 dormant
+  lobster-mail status: duty for video-tools is held by desk-1, not desk-2; only the session on duty may set or clear its status
+  $ ./lobster-mail status --as video-tools --session desk-1 --clear
+  Status for video-tools cleared by desk-1 at 2026-11-10T15:42:15Z
+  $ ./lobster-mail status --as video-tools
+  No status for video-tools
   ```
 - **`start`** is what a session reads first, and what a Claude Code `SessionStart` hook runs. It
   claims, prints and closes the previous session's handover (every message in `new/` from the
@@ -572,6 +607,10 @@ Then it watches with **`wait`**, run as a background command, so that its return
 session: when it returns with mail, `ack`, report, and `wait` again; when it returns empty
 (exit 5, after 25 minutes by default), `wait` again.
 
+A session sets a status about itself (`status`) only when a message from the project that runs
+the sessions (in the author's projects, `bernstein`) or its own project's rules tell it to, and
+clears it when told.
+
 A session that must act on mail from one sender only for a while, leaving the rest unclaimed in
 `new/`, watches with `--from NAME` on `wait` or `checkin`, so others' mail does not wake it.
 
@@ -624,10 +663,10 @@ and a non-zero exit code. Standard output carries only results.
 | Code | Meaning | Examples |
 |------|---------|----------|
 | 0 | Success, or with `--dry-run` everything checked and nothing done; `start` always, so a session start never breaks (its failure is said on both streams) | |
-| 2 | Bad arguments | no verb or an unknown one; `--as`, `--to`, `--subject` or `--session` missing; an empty or multi-line subject; an empty or missing body; a name with a path separator; no mail root configured; `duty status --all` with `--as`, or `--all` on another `duty` action; a pace other than eager, normal or relaxed |
-| 3 | A precondition is not met | no such mailbox (sender, recipient or `--as`); the root folder is missing (`duty status --all`); the mailbox already exists (`init`); no such message; the message is not in the folder the verb moves from; the duty is held by another session; the duty is being taken or given up right now (run again) |
+| 2 | Bad arguments | no verb or an unknown one; `--as`, `--to`, `--subject` or `--session` missing; an empty or multi-line subject; an empty or missing body; a name with a path separator; no mail root configured; `duty status --all` with `--as`, or `--all` on another `duty` action; a pace other than eager, normal or relaxed; a status that is empty, over 60 characters or not one line, with `--clear` as well, or an `--until` that is not a time with a zone or has no status with it |
+| 3 | A precondition is not met | no such mailbox (sender, recipient or `--as`); the root folder is missing (`duty status --all`); the mailbox already exists (`init`); no such message; the message is not in the folder the verb moves from; the duty is held by another session, or nobody holds it (`status` setting or clearing); the duty is being taken or given up right now (run again) |
 | 4 | Could not write or rename | permission, disk full, a file that appeared under the chosen name; the partial file in `tmp/` is named and left when this run wrote one |
-| 5 | A message is not as expected, or nothing came | the body's hash differs on `read` or `ack`; `reply` to a file with no `From`; `watch` or `wait` timed out; `checkin` found nothing new (with `--from`: nothing from the named senders, others' mail counted in brackets); a pace file holding no level (`pace`) |
+| 5 | A message is not as expected, or nothing came | the body's hash differs on `read` or `ack`; `reply` to a file with no `From`; `watch` or `wait` timed out; `checkin` found nothing new (with `--from`: nothing from the named senders, others' mail counted in brackets); a pace file holding no level (`pace`); a status file that is not a status (`status`; `duty status` shows it as none) |
 | 6 | The pace changed while `wait` watched | run `pace` and follow what it prints, then watch again as it says |
 | 7 | Delivered, but no copy in `sent/` (`send`, `reply`, `handover`) | the recipient has the message; its copy could not be written into the sender's `sent/` (permission, disk full). Do not send it again |
 
@@ -665,7 +704,7 @@ was changed after it was sent, so ask the sender.
 ```bash
 cd lobster-tools
 python3 -m venv .venv && .venv/bin/pip install -r requirements-dev.txt
-.venv/bin/pytest                # 176 tests, 98% coverage (8 November 2026)
+.venv/bin/pytest                # 206 tests, 98% coverage (10 November 2026)
 .venv/bin/ruff check .          # lint
 ```
 
@@ -690,6 +729,10 @@ And (8 November 2026) `--from` on a scratch root, real clock: with only another 
 in `new/`, `checkin --from bernstein` exited 5 and `wait --from bernstein --timeout 3` watched the
 full 3 seconds; a `bernstein` message sent four seconds into a `wait --from bernstein` was listed
 within a second, alone, with the other counted; the other message's bytes and place were unchanged.
+And (10 November 2026) `status` on a scratch root, real clock: set with `--until`, shown by
+`status`, `duty status` and `--all` in text and JSON (every file under the root hashed the same
+before and after those); refused for another session (exit 3) and for two lines (exit 2); cleared;
+set again and handed over, after which none was shown and the old status was in `duty-log/`.
 
 ## Known limitations and non-goals
 
@@ -762,6 +805,11 @@ within a second, alone, with the other counted; the other message's bytes and pl
 - 8 November 2026: `wait` and `checkin` take `--from NAME` (repeatable) to count only mail from
   those senders; others' mail stays in `new/`, untouched, and is only counted. With `--json` and
   `--from`, two new keys: `from` and `other_waiting`. Without `--from`, nothing changes.
+- 10 November 2026: a new verb, `status`, lets the session on duty report a short status about
+  itself (`dreaming`, `dormant`), with an optional `--until` time; it is kept with the duty and
+  cleared by a handover, a release or a takeover. `duty status` adds it to its line when one is set,
+  and the JSON of `duty status --as` and `--all` gains a key, `reported`, which is `null` when there
+  is none. Nothing else prints differently.
 
 ## Contributing
 
