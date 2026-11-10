@@ -389,6 +389,13 @@ lobster-mail --help; lobster-mail <verb> --help
   "dreaming" since …`), and its JSON, with `--as` or `--all`, carries it as `reported` (`null` when
   there is none). `--json` on `status` prints `mailbox`, `holder` and `reported`, and `action` when
   it sets or clears.
+  Since every session on one machine has the same name (`mac`), a new session can take up a duty
+  an earlier one left with its status on it. So when `duty take`, `wait` or `checkin` finds its
+  own session name already on duty and the duty carries a status, the "already on duty" line is
+  followed by one naming the status and the command to clear it if it is no longer true; nothing
+  is cleared. Their `--json` carries `reported` (`null` when none). And `start` adds a step `0.`
+  under "What to do now": a session that has just started clears the status unless it set it
+  itself.
   ```
   $ ./lobster-mail status --as video-tools --session desk-1 dreaming --until 2026-11-10T16:42:15Z
   Status for video-tools set by desk-1 at 2026-11-10T15:42:15Z: "dreaming", until 2026-11-10T16:42:15Z
@@ -402,6 +409,9 @@ lobster-mail --help; lobster-mail <verb> --help
   Status for video-tools cleared by desk-1 at 2026-11-10T15:42:15Z
   $ ./lobster-mail status --as video-tools
   No status for video-tools
+  $ ./lobster-mail duty take --as beta --session mac
+  mac is already on duty for beta since 2026-11-10T16:00:24Z; heartbeat refreshed to 2026-11-10T16:00:24Z
+  It carries the status "dormant", set at 2026-11-10T16:00:24Z; if that is no longer true (this session has taken up an earlier session's duty, for one), clear it: lobster-mail status --as beta --session mac --clear
   ```
 - **`start`** is what a session reads first, and what a Claude Code `SessionStart` hook runs. It
   claims, prints and closes the previous session's handover (every message in `new/` from the
@@ -609,7 +619,8 @@ session: when it returns with mail, `ack`, report, and `wait` again; when it ret
 
 A session sets a status about itself (`status`) only when a message from the project that runs
 the sessions (in the author's projects, `bernstein`) or its own project's rules tell it to, and
-clears it when told.
+clears it when told. When `start` (its step `0.`), or `duty take`, `wait` or `checkin`, says the
+duty already carries a status, a session that has just started clears it unless it set it itself.
 
 A session that must act on mail from one sender only for a while, leaving the rest unclaimed in
 `new/`, watches with `--from NAME` on `wait` or `checkin`, so others' mail does not wake it.
@@ -704,7 +715,7 @@ was changed after it was sent, so ask the sender.
 ```bash
 cd lobster-tools
 python3 -m venv .venv && .venv/bin/pip install -r requirements-dev.txt
-.venv/bin/pytest                # 206 tests, 98% coverage (10 November 2026)
+.venv/bin/pytest                # 216 tests, 98% coverage (10 November 2026)
 .venv/bin/ruff check .          # lint
 ```
 
@@ -733,6 +744,9 @@ And (10 November 2026) `status` on a scratch root, real clock: set with `--until
 `status`, `duty status` and `--all` in text and JSON (every file under the root hashed the same
 before and after those); refused for another session (exit 3) and for two lines (exit 2); cleared;
 set again and handed over, after which none was shown and the old status was in `duty-log/`.
+And (10 November 2026) a session named `mac` taking up a duty left by an earlier `mac` with
+`dormant` on it, on a scratch root: `duty take` and `checkin` printed the extra line, `start` its
+step `0.`; the status was still there afterwards; once cleared, all three printed as before.
 
 ## Known limitations and non-goals
 
@@ -810,6 +824,11 @@ set again and handed over, after which none was shown and the old status was in 
   cleared by a handover, a release or a takeover. `duty status` adds it to its line when one is set,
   and the JSON of `duty status --as` and `--all` gains a key, `reported`, which is `null` when there
   is none. Nothing else prints differently.
+- 10 November 2026: when `duty take`, `wait` or `checkin` finds its own session name already on
+  duty and the duty carries a status, a second line says so, with the command to clear it if it
+  is no longer true; nothing is cleared. Their `--json` gains `reported` (`null` when none). `start`
+  adds a step `0.` under "What to do now" when the duty carries a status. With no status, every
+  text output is as before.
 
 ## Contributing
 
