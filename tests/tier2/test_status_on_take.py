@@ -78,3 +78,39 @@ def test_duty_take_json_carries_reported_or_null(run, root, two, monkeypatch):
     _, out, _ = take(run, root, "--json", session="laptop")
     taken = json.loads(out)
     assert taken["action"] == "taken" and taken["reported"] is None
+
+
+def watch(run, root, verb, *extra):
+    argv = [verb, "--as", "b", "--session", "mac", "--root", str(root), *extra]
+    if verb == "wait":
+        argv += ["--timeout", "1", "--every", "1"]
+    return run(*argv)
+
+
+def test_wait_and_checkin_print_the_line_and_keep_the_status(run, root, mail_for_b):
+    take(run, root)
+    set_status(run, root, "dormant")
+    for verb in ("wait", "checkin"):
+        code, out, _ = watch(run, root, verb)
+        assert code == 0, verb
+        assert out.startswith(ALREADY + carries("dormant")), verb
+    assert shown(run, root).startswith('Status for b: "dormant"')
+
+
+def test_checkin_with_nothing_new_still_says_so(run, root, two):
+    take(run, root)
+    set_status(run, root, "dreaming")
+    code, out, _ = watch(run, root, "checkin")
+    assert code == 5
+    assert out == ALREADY + carries("dreaming")
+
+
+def test_wait_and_checkin_json_carry_reported_or_null(run, root, mail_for_b):
+    for verb in ("wait", "checkin"):
+        _, out, _ = watch(run, root, verb, "--json")
+        assert json.loads(out)["reported"] is None, verb
+    set_status(run, root, "dormant")
+    for verb in ("wait", "checkin"):
+        _, out, _ = watch(run, root, verb, "--json")
+        assert json.loads(out)["reported"] == {
+            "status": "dormant", "set": "2026-10-10T09:00:00Z", "until": None}, verb

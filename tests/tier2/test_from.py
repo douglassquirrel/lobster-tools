@@ -142,7 +142,8 @@ def test_without_from_the_json_keeps_exactly_its_old_keys(run, root, bernstein_t
     code, out, err = run(verb, "--root", str(root), "--as", "b", "--session", "desk-1", "--json")
     assert code == 0, err
     result = json.loads(out)
-    assert sorted(result) == ["duty", "mail", "mailbox", "own_handover_only", "session"]
+    assert sorted(result) == ["duty", "mail", "mailbox", "own_handover_only", "reported",
+                              "session"]
     assert len(result["mail"]) == 3                         # everyone's mail counts, as before
 
 

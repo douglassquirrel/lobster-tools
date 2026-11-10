@@ -931,21 +931,21 @@ def take_duty_or_fail(args, box, doing):
     """Take or keep the duty for wait and checkin, printing its lines unless --json; another
     session's fresh duty becomes 'not watching' / 'not checking in'."""
     try:
-        _, _, action, lines, _ = take_duty(box, args.session, clock(), args.stale)
+        _, _, action, lines, extra = take_duty(box, args.session, clock(), args.stale)
     except Failure as failure:
         raise Failure(failure.code, "%s; not %s" % (failure, doing))
     if not args.json:
         for text in lines:
             print(text)
-    return action
+    return action, extra["reported"]
 
 
-def report_arrivals(args, box, action, found, again, level="normal", others=0):
+def report_arrivals(args, box, action, found, again, level="normal", others=0, reported=None):
     """The tail wait and checkin share: the mail listed, and what to do with it, text or JSON."""
     own_only = all(entry["from"] == box.name for entry in found)
     if args.json:
         result = {"mailbox": box.name, "session": args.session, "duty": action, "mail": found,
-                  "own_handover_only": own_only}
+                  "own_handover_only": own_only, "reported": reported}
         if args.senders:
             result.update({"from": args.senders, "other_waiting": others})
         print(json.dumps(result, indent=1))
@@ -967,7 +967,7 @@ def cmd_wait(args):
     level = pace_level(box)
     if level == "relaxed" and not args.json:
         print(RELAXED_WAIT % box.name)
-    action = take_duty_or_fail(args, box, "watching")
+    action, reported = take_duty_or_fail(args, box, "watching")
     pace = read_pace(box)
     changed = []
     others = [0]
@@ -986,7 +986,7 @@ def cmd_wait(args):
     if found is None:
         raise Failure(EXIT_UNEXPECTED, "%s; run wait again to keep watching" % nothing_from(
             box, args.senders, others[0], " after %g seconds" % args.timeout))
-    return report_arrivals(args, box, action, found, "wait", level, others[0])
+    return report_arrivals(args, box, action, found, "wait", level, others[0], reported)
 
 
 def cmd_checkin(args):
@@ -995,13 +995,13 @@ def cmd_checkin(args):
     check_name(args.session, "--session")
     check_senders(args)
     box = mailbox(resolve_root(args), args.me, "--as")
-    action = take_duty_or_fail(args, box, "checking in")
+    action, reported = take_duty_or_fail(args, box, "checking in")
     level = pace_level(box)
     found, others = new_mail(box, args.senders)
     if not found:
         raise Failure(EXIT_UNEXPECTED, "%s; %s" % (nothing_from(box, args.senders, others),
                                                    NOTHING_NEW[level]))
-    return report_arrivals(args, box, action, found, "check in", level, others)
+    return report_arrivals(args, box, action, found, "check in", level, others, reported)
 
 
 PACE_MEANING = {
