@@ -226,3 +226,68 @@ def test_a_status_file_that_is_not_a_status_is_exit_5_and_shown_as_none_by_duty(
         (root / "b" / "duty" / "status").write_text(text)
         assert status(run, root)[0] == 5, text
         assert duty_json(run, root, "--as", "b")["reported"] is None, text
+
+
+def test_handover_release_and_a_stale_takeover_each_clear_it_and_keep_it_in_the_log(
+        run, root, two, monkeypatch):
+    def logged():
+        return sorted((root / "b" / "duty-log").iterdir())
+
+    take(run, root)
+    status(run, root, "--session", "desk", "dreaming")
+    code, _, err = run("handover", "--as", "b", "--session", "desk", "--root", str(root), "-",
+                       stdin="Stopped here.\n")
+    assert (code, err) == (0, "")
+    assert status(run, root)[1] == "No status for b\n"
+    assert '"dreaming"' in (logged()[-1] / "status").read_text()
+
+    monkeypatch.setenv("LOBSTER_MAIL_NOW", "2026-10-10T10:10:00+01:00")
+    take(run, root)
+    assert status(run, root)[1] == "No status for b\n"
+    status(run, root, "--session", "desk", "dormant")
+    code, _, err = run("duty", "release", "--as", "b", "--session", "desk", "--root", str(root))
+    assert (code, err) == (0, "")
+    assert status(run, root)[1] == "No status for b\n"
+    assert '"dormant"' in (logged()[-1] / "status").read_text()
+
+    monkeypatch.setenv("LOBSTER_MAIL_NOW", "2026-10-10T10:20:00+01:00")
+    take(run, root)
+    status(run, root, "--session", "desk", "dormant")
+    monkeypatch.setenv("LOBSTER_MAIL_NOW", "2026-10-10T11:20:00+01:00")
+    _, out, _ = status(run, root)
+    assert out.startswith('Status for b: "dormant"')
+    take(run, root, session="laptop")
+    _, out, _ = status(run, root, "--json")
+    assert json.loads(out) == {"mailbox": "b", "holder": "laptop", "reported": None}
+    assert len(logged()) == 3
+
+
+def test_a_stale_duty_keeps_its_status_in_duty_status_all(run, root, two, monkeypatch):
+    monkeypatch.setenv("LOBSTER_MAIL_NOW", "2026-10-10T08:00:00+01:00")
+    take(run, root)
+    status(run, root, "--session", "desk", "dormant")
+    monkeypatch.setenv("LOBSTER_MAIL_NOW", "2026-10-10T12:00:00+01:00")
+    entry = duty_json(run, root, "--all")["mailboxes"][1]
+    assert entry["duty"]["stale"] is True
+    assert entry["reported"] == {"status": "dormant", "set": "2026-10-10T07:00:00Z",
+                                 "until": None}
+
+
+def test_a_status_past_its_until_is_shown_as_it_was_set(run, root, two, monkeypatch):
+    take(run, root)
+    status(run, root, "--session", "desk", "dreaming", "--until", UNTIL)
+    monkeypatch.setenv("LOBSTER_MAIL_NOW", "2026-10-10T13:00:00+01:00")
+    _, out, _ = status(run, root)
+    assert out == ('Status for b: "dreaming", set by desk at 2026-10-10T09:00:00Z, until '
+                   '2026-10-10T10:30:00Z\n')
+    assert duty_json(run, root, "--as", "b")["reported"]["until"] == UNTIL
+
+
+def test_status_never_touches_a_message(run, root, mail_for_b):
+    from conftest import every_file
+    before = every_file(root)
+    take(run, root)
+    status(run, root, "--session", "desk", "dreaming")
+    status(run, root)
+    status(run, root, "--session", "desk", "--clear")
+    assert every_file(root) == before
