@@ -849,9 +849,16 @@ def take_duty(box, session, now, stale):
     state = duty_state(box, now, stale)
     if state is not None and state["holder"] == session:
         write_heartbeat(box, stamp)
-        return state["since"], stamp, "refreshed", [
-            "%s is already on duty for %s since %s; heartbeat refreshed to %s"
-            % (session, box.name, state["since"], stamp)], {}
+        lines = ["%s is already on duty for %s since %s; heartbeat refreshed to %s"
+                 % (session, box.name, state["since"], stamp)]
+        reported = state["reported"]
+        if reported:
+            until = " (until %s)" % reported["until"] if reported["until"] else ""
+            lines.append('It carries the status "%s", set at %s%s; if that is no longer true (this '
+                         "session has taken up an earlier session's duty, for one), clear it: "
+                         "lobster-mail status --as %s --session %s --clear"
+                         % (reported["status"], reported["set"], until, box.name, session))
+        return state["since"], stamp, "refreshed", lines, {"reported": reported}
     if state is not None and not state["stale"]:
         raise Failure(EXIT_PRECONDITION, "duty for %s is held by %s (last beat %s, %d minutes "
                       "ago); take it when the heartbeat is older than %g minutes"
@@ -860,12 +867,12 @@ def take_duty(box, session, now, stale):
     os.mkdir(box.folder("duty"))
     write_duty(box, session, stamp, stamp)
     lines = ["Duty for %s taken by %s at %s" % (box.name, session, stamp)]
-    extra = {}
+    extra = {"reported": None}
     if logged:
         lines.append("took over from %s, whose heartbeat was stale (last beat %s, %d minutes "
                      "ago); its duty folder is now %s" % (state["holder"], state["last_beat"],
                                                            state["minutes"], logged))
-        extra = {"took_over_from": state["holder"], "logged": logged}
+        extra.update({"took_over_from": state["holder"], "logged": logged})
     return stamp, stamp, "taken", lines, extra
 
 

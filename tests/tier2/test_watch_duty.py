@@ -159,7 +159,7 @@ def test_duty_take_beat_and_release_print_json_when_asked(run, root, two, monkey
     code, out, _ = run("duty", "take", "--root", str(root), "--as", "a", "--session", "desk-1", "--json")
     assert code == 0 and json.loads(out) == {
         "mailbox": "a", "holder": "desk-1", "since": "2026-10-10T09:00:00Z",
-        "last_beat": "2026-10-10T09:00:00Z", "action": "taken"}
+        "last_beat": "2026-10-10T09:00:00Z", "action": "taken", "reported": None}
     monkeypatch.setenv("LOBSTER_MAIL_NOW", "2026-10-10T10:05:00+01:00")
     code, out, _ = run("duty", "take", "--root", str(root), "--as", "a", "--session", "desk-1", "--json")
     assert code == 0 and json.loads(out)["action"] == "refreshed"
@@ -179,4 +179,4 @@ def test_duty_take_beat_and_release_print_json_when_asked(run, root, two, monkey
     assert code == 0 and json.loads(out) == {
         "mailbox": "a", "holder": "desk-2", "since": "2026-10-10T09:51:00Z",
         "last_beat": "2026-10-10T09:51:00Z", "action": "taken", "took_over_from": "desk-1",
-        "logged": str(root / "a" / "duty-log" / "2026-10-10T09-51-00-desk-1")}
+        "logged": str(root / "a" / "duty-log" / "2026-10-10T09-51-00-desk-1"), "reported": None}
