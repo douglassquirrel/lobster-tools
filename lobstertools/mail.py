@@ -11,6 +11,7 @@ import os
 import re
 import sys
 import time
+import unicodedata
 from datetime import datetime, timezone
 
 from lobstertools import config, message
@@ -207,6 +208,36 @@ def read_body(path, stdin):
     if not body.strip():
         raise Failure(EXIT_USAGE, "the body is empty; a message needs some text")
     return body
+
+
+STATUS_LIMIT = 60
+
+
+def check_status_text(text):
+    """A status a session reports: one line of plain text, 1 to STATUS_LIMIT characters."""
+    if any(unicodedata.category(ch) in ("Cc", "Zl", "Zp") for ch in text):
+        raise Failure(EXIT_USAGE, "the status must be one line of plain text, without newlines, "
+                      "tabs or other control characters")
+    text = text.strip()
+    if not text:
+        raise Failure(EXIT_USAGE, "the status must be one line of 1 to %d characters; this one is "
+                      "empty (use --clear to clear it)" % STATUS_LIMIT)
+    if len(text) > STATUS_LIMIT:
+        raise Failure(EXIT_USAGE, "the status must be one line of 1 to %d characters; this one "
+                      "has %d" % (STATUS_LIMIT, len(text)))
+    return text
+
+
+def check_until(text):
+    """--until: a time with Z or an offset, given back as the tool's own UTC stamp."""
+    try:
+        when = message.parse_date(text)
+    except ValueError:
+        when = None
+    if when is None or when.tzinfo is None:
+        raise Failure(EXIT_USAGE, "--until %r is not a time with a zone; give it as "
+                      "2026-11-10T16:30:00Z" % text)
+    return message.format_date(when)
 
 
 def check_subject(subject):
