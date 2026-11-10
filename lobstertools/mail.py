@@ -17,7 +17,7 @@ from datetime import datetime, timezone
 from lobstertools import config, message
 
 VERBS = ["init", "send", "reply", "check", "list", "read", "ack", "done", "thread", "watch", "duty",
-         "start", "wait", "checkin", "handover", "pace"]
+         "start", "wait", "checkin", "handover", "pace", "status"]
 BOXES = ["new", "open", "done", "sent"]
 AS_HELP = "the mailbox this run acts for, named as the project is (or LOBSTER_MAIL_AS)"
 ROOT_HELP = "the mail root (or LOBSTER_MAIL_ROOT, or MAIL_ROOT in ~/.lobster-tools.conf)"
@@ -646,8 +646,12 @@ def duty_state(box, now, stale_minutes):
         raise DutyChanging(box.name)
     age = now - beat_time
     minutes = int(age.total_seconds() // 60)
+    try:
+        reported = read_status(box)
+    except (ValueError, TypeError):
+        reported = None  # shown as none here; status itself says the file is not a status
     return {"mailbox": box.name, "holder": holder, "since": since, "last_beat": last_beat,
-            "stale": minutes >= stale_minutes, "minutes": minutes}
+            "stale": minutes >= stale_minutes, "minutes": minutes, "reported": reported}
 
 
 def write_duty(box, session, since, beat):
@@ -675,6 +679,85 @@ def write_heartbeat(box, beat):
     os.rename(fresh, os.path.join(duty, "heartbeat"))
 
 
+def read_status(box):
+    """The status the session on duty reported, as {status, set, until}, or None: no duty, no
+    status, or a cleared one. A file that is not a status raises ValueError or TypeError."""
+    try:
+        with open(os.path.join(box.folder("duty"), "status"), encoding="utf-8") as handle:
+            data = json.loads(handle.read())
+    except FileNotFoundError:
+        return None
+    if data == {}:
+        return None
+    if not isinstance(data, dict) or not isinstance(data.get("status"), str) \
+            or not isinstance(data.get("set"), str):
+        raise TypeError("not a status")
+    return {"status": data["status"], "set": data["set"], "until": data.get("until")}
+
+
+def write_status(box, reported):
+    """Written whole beside the old one, then renamed over it, as the heartbeat is; a cleared
+    status is the file {} (nothing is deleted)."""
+    duty = box.folder("duty")
+    fresh = os.path.join(duty, "status.%s" % os.getpid())
+    text = json.dumps(reported if reported else {}, ensure_ascii=False)
+    write_new_file(fresh, (text + "\n").encode("utf-8"))
+    os.rename(fresh, os.path.join(duty, "status"))
+
+
+def status_text(reported, holder):
+    until = ", until %s" % reported["until"] if reported["until"] else ""
+    return '"%s", set by %s at %s%s' % (reported["status"], holder, reported["set"], until)
+
+
+def cmd_status(args):
+    """Show the status the session on duty reports about itself, or set or clear it."""
+    if args.text is not None and args.clear:
+        raise Failure(EXIT_USAGE, "give a status or --clear, not both")
+    if args.until is not None and args.text is None:
+        raise Failure(EXIT_USAGE, "--until goes with a status to set")
+    box = mailbox(resolve_root(args), args.me, "--as")
+    now = clock()
+    state = duty_state(box, now, 45)
+    holder = state["holder"] if state else None
+    if args.text is None and not args.clear:
+        try:
+            reported = read_status(box) if state else None
+        except (ValueError, TypeError):
+            raise Failure(EXIT_UNEXPECTED, "the status file in %s is not a status; set one with "
+                          "status TEXT, or clear it with status --clear" % box.folder("duty"))
+        if args.json:
+            print(json.dumps({"mailbox": box.name, "holder": holder, "reported": reported},
+                             indent=1))
+        elif reported is None:
+            print("No status for %s" % box.name)
+        else:
+            print("Status for %s: %s" % (box.name, status_text(reported, holder)))
+        return EXIT_OK
+    check_name(args.session, "--session")
+    if state is None:
+        raise Failure(EXIT_PRECONDITION, "nobody is on duty for %s; only the session on duty may "
+                      "set or clear its status" % box.name)
+    if holder != args.session:
+        raise Failure(EXIT_PRECONDITION, "duty for %s is held by %s, not %s; only the session on "
+                      "duty may set or clear its status" % (box.name, holder, args.session))
+    reported = None
+    if not args.clear:
+        reported = {"status": check_status_text(args.text), "set": message.format_date(now),
+                    "until": check_until(args.until) if args.until else None}
+    write_status(box, reported)
+    if args.json:
+        print(json.dumps({"mailbox": box.name, "holder": holder, "reported": reported,
+                          "action": "cleared" if args.clear else "set"}, indent=1))
+    elif args.clear:
+        print("Status for %s cleared by %s at %s" % (box.name, holder, message.format_date(now)))
+    else:
+        until = ", until %s" % reported["until"] if reported["until"] else ""
+        print('Status for %s set by %s at %s: "%s"%s' % (box.name, holder, reported["set"],
+                                                         reported["status"], until))
+    return EXIT_OK
+
+
 def cmd_duty_all(args):
     """duty status --all: every mailbox under the root, its duty and what waits. Reads only."""
     root = resolve_root(args)
@@ -698,7 +781,8 @@ def cmd_duty_all(args):
         found.append({"mailbox": name, "duty": duty, "duty_changing": changing,
                       "new": len(waiting), "open": len(entries(box, "open")),
                       "handover_waiting": any(e["from"] == name for e in waiting),
-                      "pace": read_pace(box) or "normal"})
+                      "pace": read_pace(box) or "normal",
+                      "reported": duty["reported"] if duty else None})
     if args.json:
         print(json.dumps({"root": root, "mailboxes": found, "skipped": skipped}, indent=1))
         return EXIT_OK
@@ -712,9 +796,9 @@ def cmd_duty_all(args):
         elif duty is None:
             who = "nobody on duty"
         else:
-            who = "on duty %s, %s, last beat %s (%d minutes ago)" % (
+            who = "on duty %s, %s, last beat %s (%d minutes ago)%s" % (
                 duty["holder"], "stale" if duty["stale"] else "fresh", duty["last_beat"],
-                duty["minutes"])
+                duty["minutes"], reporting(duty))
         print("%s  %s  new %d  open %d  handover %s  pace %s" % (
             entry["mailbox"].ljust(width), who, entry["new"], entry["open"],
             "waiting" if entry["handover_waiting"] else "no", entry["pace"]))
@@ -1027,13 +1111,22 @@ def cmd_handover(args, stdin=None):
     return EXIT_OK
 
 
+def reporting(state):
+    """What the text forms of duty status add when the session on duty reports a status."""
+    reported = state["reported"]
+    if reported is None:
+        return ""
+    until = " (until %s)" % reported["until"] if reported["until"] else ""
+    return '; reporting "%s" since %s%s' % (reported["status"], reported["set"], until)
+
+
 def report_duty_status(box, state):
     if state is None:
         print("Nobody is on duty for %s" % box.name)
     else:
-        print("%s: on duty %s since %s; last beat %s (%s, %d minutes ago)"
+        print("%s: on duty %s since %s; last beat %s (%s, %d minutes ago)%s"
               % (box.name, state["holder"], state["since"], state["last_beat"],
-                 "stale" if state["stale"] else "fresh", state["minutes"]))
+                 "stale" if state["stale"] else "fresh", state["minutes"], reporting(state)))
 
 
 START_INSTRUCTIONS = """== What to do now ==
@@ -1141,7 +1234,8 @@ def report_duty(args, box, holder, since, last_beat, action, lines, extra=None):
 COMMANDS = {"init": cmd_init, "send": cmd_send, "check": cmd_check, "list": cmd_list,
             "read": cmd_read, "ack": cmd_ack, "done": cmd_done, "reply": cmd_reply,
             "thread": cmd_thread, "watch": cmd_watch, "duty": cmd_duty, "start": cmd_start,
-            "wait": cmd_wait, "checkin": cmd_checkin, "handover": cmd_handover, "pace": cmd_pace}
+            "wait": cmd_wait, "checkin": cmd_checkin, "handover": cmd_handover, "pace": cmd_pace,
+            "status": cmd_status}
 
 
 def build_parser():
@@ -1243,6 +1337,17 @@ def build_parser():
     sub.add_argument("--subject", metavar="TEXT", help="default: Handover and the UTC time")
     sub.add_argument("body", metavar="BODY.md", help="the note: a file, or - for standard input")
 
+    sub = verb("status", "show the status the session on duty reports about itself, or set or "
+               "clear it")
+    sub.add_argument("text", nargs="?", metavar="TEXT",
+                     help="one line, up to %d characters (none: show the current status)"
+                     % STATUS_LIMIT)
+    sub.add_argument("--session", metavar="NAME",
+                     help="the session on duty, to set or clear (or LOBSTER_MAIL_SESSION)")
+    sub.add_argument("--until", metavar="TIME",
+                     help="when the session expects to finish, e.g. 2026-11-10T16:30:00Z")
+    sub.add_argument("--clear", action="store_true", help="clear the status")
+
     sub = verb("pace", "show how eager this mailbox's sessions are about mail, or set it")
     sub.add_argument("level", nargs="?", metavar="LEVEL",
                      help="eager, normal or relaxed (none: show the current pace)")
@@ -1273,6 +1378,9 @@ def main(argv=None, stdin=None):
         args.session = os.environ.get("LOBSTER_MAIL_SESSION") or None
     if args.verb == "duty" and args.action != "status" and not args.session:
         parser.error("--session NAME is required for duty %s" % args.action)
+    if args.verb == "status" and (args.text is not None or args.clear) and not args.session:
+        parser.error("--session NAME is required to set or clear a status (or set "
+                     "LOBSTER_MAIL_SESSION)")
     if args.verb in ("wait", "checkin") and not args.session:
         parser.error("--session NAME is required for %s (or set LOBSTER_MAIL_SESSION)" % args.verb)
     command = COMMANDS.get(args.verb)

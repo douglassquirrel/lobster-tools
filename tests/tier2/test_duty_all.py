@@ -33,9 +33,9 @@ def test_json_lists_each_mailbox_in_name_order_with_its_counts(run, root, mail_f
     run("ack", "--as", "b", "--root", str(root))
     assert all_json(run, root) == {"root": str(root), "skipped": [], "mailboxes": [
         {"mailbox": "a", "duty": None, "duty_changing": False, "new": 0, "open": 0,
-         "handover_waiting": False, "pace": "normal"},
+         "handover_waiting": False, "pace": "normal", "reported": None},
         {"mailbox": "b", "duty": None, "duty_changing": False, "new": 2, "open": 1,
-         "handover_waiting": False, "pace": "normal"},
+         "handover_waiting": False, "pace": "normal", "reported": None},
     ]}
 
 
@@ -52,7 +52,8 @@ def test_each_duty_is_what_duty_status_gives_and_a_stale_one_is_left_in_place(ru
         assert listed[name] == json.loads(single), name
     assert listed["a"]["stale"] is False and listed["a"]["minutes"] == 5
     assert listed["b"] == {"mailbox": "b", "holder": "old-desk", "since": "2026-10-10T07:00:00Z",
-                           "last_beat": "2026-10-10T07:00:00Z", "stale": True, "minutes": 120}
+                           "last_beat": "2026-10-10T07:00:00Z", "stale": True, "minutes": 120,
+                           "reported": None}
     assert (root / "b" / "duty" / "holder").read_text() == "old-desk\n2026-10-10T07:00:00Z\n"
     assert not (root / "b" / "duty-log").exists()
     assert all_json(run, root, "--stale", "180")["mailboxes"][1]["duty"]["stale"] is False

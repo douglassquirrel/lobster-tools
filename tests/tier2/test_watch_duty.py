@@ -58,7 +58,8 @@ def test_duty_take_creates_the_lock_and_status_shows_it(run, root, two):
                            "2026-10-10T09:00:00Z (fresh, 0 minutes ago)")
     code, out, _ = run("duty", "status", "--root", str(root), "--as", "a", "--json")
     assert json.loads(out) == {"mailbox": "a", "holder": "desk-1", "since": "2026-10-10T09:00:00Z",
-                               "last_beat": "2026-10-10T09:00:00Z", "stale": False, "minutes": 0}
+                               "last_beat": "2026-10-10T09:00:00Z", "stale": False, "minutes": 0,
+                               "reported": None}
 
 
 def test_duty_take_by_another_session_is_refused_while_the_heartbeat_is_fresh(run, root, two, monkeypatch):
