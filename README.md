@@ -193,7 +193,7 @@ lobster-mail watch  --as ME [--timeout SECONDS] [--every SECONDS]   [--root DIR]
 lobster-mail duty   take|beat|release|status --as ME --session NAME [--stale MINUTES]  [--root DIR] [--json]
 lobster-mail duty   status --all [--stale MINUTES]                           [--root DIR] [--json]
 lobster-mail start    --as ME | --project DIR                       [--root DIR]
-lobster-mail wait     --as ME --session NAME [--timeout SECONDS] [--every SECONDS] [--stale MINUTES] [--from NAME]  [--root DIR] [--json]
+lobster-mail wait     --as ME --session NAME [--timeout SECONDS] [--every SECONDS] [--beat MINUTES] [--stale MINUTES] [--from NAME]  [--root DIR] [--json]
 lobster-mail checkin  --as ME --session NAME [--stale MINUTES] [--from NAME]             [--root DIR] [--json]
 lobster-mail handover --as ME [--session NAME] [--subject TEXT] BODY.md   [--root DIR] [--dry-run]
 lobster-mail pace     --as ME [eager|normal|relaxed]                     [--root DIR] [--json]
@@ -462,8 +462,11 @@ lobster-mail --help; lobster-mail <verb> --help
 - **`wait`** is `watch` with the duty: it takes the duty for `--session` (or refreshes the
   heartbeat if that session already holds it; another session's fresh duty is exit 3 and nothing is
   watched), then looks in `new/` every `--every` seconds (default 5) for up to `--timeout` seconds
-  (default 1500, 25 minutes: inside the 45-minute staleness, so a session that keeps re-running it
-  keeps the duty). Mail: the listing, then what to do; when every new message is from the mailbox
+  (default 3600, an hour; `0`: never). While it watches it refreshes the duty's heartbeat every
+  `--beat` minutes (default 10; a whole number less than `--stale`, or exit 2), so its duty never
+  goes stale however long it waits. The beat goes by the wall clock, so after the Mac has slept the
+  first look beats at once. If at a beat the duty has been given up, or taken by another session,
+  `wait` writes nothing and stops with exit 3, naming the new holder. Mail: the listing, then what to do; when every new message is from the mailbox
   itself, that is the session's own handover, and the line says to leave it for the next session
   and not wait again. Nothing by the timeout: exit 5, "run wait again". If the mailbox's pace
   (see `pace`) changes while it watches, it returns at once with exit 6, so the session reads
@@ -615,7 +618,8 @@ interactively, so each later `lobster-mail` command asks for permission until th
 
 Then it watches with **`wait`**, run as a background command, so that its return wakes the
 session: when it returns with mail, `ack`, report, and `wait` again; when it returns empty
-(exit 5, after 25 minutes by default), `wait` again.
+(exit 5, after an hour by default), `wait` again, without a word in chat. While it watches, it keeps
+the duty's heartbeat fresh by itself.
 
 A session sets a status about itself (`status`) only when a message from the project that runs
 the sessions (in the author's projects, `bernstein`) or its own project's rules tell it to, and
@@ -715,7 +719,7 @@ was changed after it was sent, so ask the sender.
 ```bash
 cd lobster-tools
 python3 -m venv .venv && .venv/bin/pip install -r requirements-dev.txt
-.venv/bin/pytest                # 216 tests, 98% coverage (10 November 2026)
+.venv/bin/pytest                # 233 tests, 98% coverage (11 November 2026)
 .venv/bin/ruff check .          # lint
 ```
 
@@ -829,6 +833,11 @@ step `0.`; the status was still there afterwards; once cleared, all three printe
   is no longer true; nothing is cleared. Their `--json` gains `reported` (`null` when none). `start`
   adds a step `0.` under "What to do now" when the duty carries a status. With no status, every
   text output is as before.
+- 11 November 2026: `wait` refreshes the duty's heartbeat every `--beat` minutes (default 10) while
+  it watches, so a long wait never leaves its duty stale; and its default `--timeout` is now 3600
+  seconds (an hour), not 1500. If the duty is given up or taken by another session while it
+  watches, `wait` stops with exit 3. A session running `wait` in the background is woken by an
+  empty return once an hour instead of twice. Nothing else in its output changes.
 
 ## Contributing
 

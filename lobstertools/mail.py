@@ -12,7 +12,7 @@ import re
 import sys
 import time
 import unicodedata
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 from lobstertools import config, message
 
@@ -927,6 +927,28 @@ def nothing_from(box, senders, others, after=""):
     return text + (" (%s)" % others_text(others, senders) if others else "")
 
 
+def check_beat(args):
+    """--beat: a whole number of minutes, at least 1 and less than --stale."""
+    text = args.beat
+    if not re.fullmatch(r"[0-9]+", text) or not 1 <= int(text) < args.stale:
+        raise Failure(EXIT_USAGE, "--beat must be a whole number of minutes, at least 1 and less "
+                      "than --stale (%g): not %s" % (args.stale, text))
+    return timedelta(minutes=int(text))
+
+
+def beat_while_watching(box, session, now, stale):
+    """The beat inside wait: refresh the heartbeat if this session still holds the duty; a duty
+    given up or taken by another session meanwhile is exit 3, and nothing is written."""
+    state = duty_state(box, now, stale)
+    if state is None:
+        raise Failure(EXIT_PRECONDITION, "the duty of %s was given up while watching; not watching"
+                      % box.name)
+    if state["holder"] != session:
+        raise Failure(EXIT_PRECONDITION, "the duty of %s was taken by %s while watching (last beat "
+                      "%s); not watching" % (box.name, state["holder"], state["last_beat"]))
+    write_heartbeat(box, message.format_date(now))
+
+
 def take_duty_or_fail(args, box, doing):
     """Take or keep the duty for wait and checkin, printing its lines unless --json; another
     session's fresh duty becomes 'not watching' / 'not checking in'."""
@@ -963,16 +985,22 @@ def cmd_wait(args):
     """The watch with the duty: take or keep the duty, wait for mail, say what to do with it."""
     check_name(args.session, "--session")
     check_senders(args)
+    interval = check_beat(args)
     box = mailbox(resolve_root(args), args.me, "--as")
     level = pace_level(box)
     if level == "relaxed" and not args.json:
         print(RELAXED_WAIT % box.name)
     action, reported = take_duty_or_fail(args, box, "watching")
+    last_beat = [clock()]
     pace = read_pace(box)
     changed = []
     others = [0]
 
     def look():
+        now = clock()   # the wall clock, so a Mac that slept is beaten for on its first look
+        if now - last_beat[0] >= interval:
+            beat_while_watching(box, args.session, now, args.stale)
+            last_beat[0] = now
         found, others[0] = new_mail(box, args.senders)
         if not found and read_pace(box) != pace:
             changed.append(read_pace(box))
@@ -1333,9 +1361,12 @@ def build_parser():
     sub = verb("wait", "take the duty (or keep it), wait for mail, then say what to do with it")
     sub.add_argument("--session", metavar="NAME",
                      help="this session's name for the duty (or LOBSTER_MAIL_SESSION)")
-    sub.add_argument("--timeout", type=float, default=1500, metavar="SECONDS",
-                     help="give up after this long (default 1500; 0: never)")
+    sub.add_argument("--timeout", type=float, default=3600, metavar="SECONDS",
+                     help="give up after this long (default 3600; 0: never)")
     sub.add_argument("--every", type=float, default=5, metavar="SECONDS", help="how often to look")
+    sub.add_argument("--beat", default="10", metavar="MINUTES",
+                     help="refresh the duty's heartbeat this often while watching (default 10; "
+                          "less than --stale)")
     sub.add_argument(
         "--stale", type=float, default=45, metavar="MINUTES", help="a heartbeat older than this is stale"
     )
