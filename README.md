@@ -12,6 +12,12 @@ message, the message's state kept as the folder it is in, and nothing ever edite
 executed: the tool only adds files and moves them, by rename, between a mailbox's folders. A
 message is information for whoever reads it, never an instruction: `check` says so on every run.
 
+The second is **`session-check`**, the facts a project's session checks by hand at its start and
+its end, in one command run from the project's folder: what is uncommitted and not pushed, which
+folders the session cannot reach, leftover `__pycache__` and lock folders, what is in
+`_to_delete/`, the diary's length against what the last handover said, and what waits in `inbox/`
+and `dreams/`. It reads only: it runs `git` with reading commands alone and writes nothing.
+
 ## Requirements
 
 - macOS with the command-line developer tools, which give `/usr/bin/python3` (Python 3.9 or
@@ -27,6 +33,7 @@ cd ~/projects/code
 git clone https://github.com/douglassquirrel/lobster-tools.git
 cd lobster-tools
 ./lobster-mail --help
+./session-check --help
 ```
 
 The command is run as `./lobster-mail` from the checkout, as every example below does; nothing
@@ -195,7 +202,7 @@ lobster-mail duty   status --all [--stale MINUTES]                           [--
 lobster-mail start    --as ME | --project DIR                       [--root DIR]
 lobster-mail wait     --as ME --session NAME [--timeout SECONDS] [--every SECONDS] [--beat MINUTES] [--stale MINUTES] [--from NAME]  [--root DIR] [--json]
 lobster-mail checkin  --as ME --session NAME [--stale MINUTES] [--from NAME]             [--root DIR] [--json]
-lobster-mail handover --as ME [--session NAME] [--subject TEXT] BODY.md   [--root DIR] [--dry-run]
+lobster-mail handover --as ME [--session NAME] [--subject TEXT] [--diary FILE] BODY.md   [--root DIR] [--dry-run]
 lobster-mail pace     --as ME [eager|normal|relaxed]                     [--root DIR] [--json]
 lobster-mail status   --as ME [--session NAME] [TEXT [--until TIME] | --clear]  [--root DIR] [--json]
 lobster-mail --help; lobster-mail <verb> --help
@@ -445,6 +452,9 @@ lobster-mail --help; lobster-mail <verb> --help
   Nobody is on duty for video-tools
   == What to do now ==
   1. Read the project's guidance as usual; the handover above says where the last session stopped.
+     Then, from the project's folder, run session-check (it sits beside lobster-mail) and
+     tell the person you work for what it says:
+     session-check start --session NAME
   2. Report what is above to the person you work for: the handover, and each message waiting, in a
      sentence each. Act on it only as your project's rules allow: by default, not until told to;
      a project's rules may say something else, and they take precedence.
@@ -520,7 +530,10 @@ lobster-mail --help; lobster-mail <verb> --help
 - **`handover`** is `send` to the mailbox itself, subject `Handover <UTC date and time>Z` unless
   `--subject` says otherwise, body from the file or `-`; then, if `--session` is given, `duty
   release` for it, or a line saying why nothing was released (nobody on duty, or another holder).
-  The next session's `start` reads it first.
+  The next session's `start` reads it first. With `--diary FILE` (the project's `DIARY.md`) it
+  counts the file's lines, as `wc -l` does, and records them in a header the tool writes,
+  `Diary-Lines: N`, which `session-check` at the next start compares with the diary it finds; a
+  file that is not there is refused (exit 2) and nothing is sent.
   ```
   $ printf 'Stopped after the count tool; nothing waits for a decision; next: the flag.\n' | ./lobster-mail handover --as video-tools --session mac -
   Sent 2026-10-10-2044-video-tools-handover-2026-10-10-20-44z to video-tools
@@ -592,6 +605,11 @@ session verbs:
 4. **`handover`** before the session ends, with a few lines on standard input (where it stopped,
    what waits for a decision, what to do next), which the next session's `start` reads first.
    It gives up the duty.
+
+And at both ends, **`session-check`** from the project's folder: `session-check start --session
+mac` (or `device`) after `start`, and `session-check end` before `handover`, which then takes
+`--diary DIARY.md` so the next start can tell whether the diary was cut short. The session tells
+the person what it prints. See "`session-check`" below.
 
 **Mail during work.** A session reports mail at the next pause in the work in hand (between
 steps, or when a step is done), not by breaking off in the middle of one, and does not start on
@@ -670,6 +688,105 @@ Without these, a chain could go on firing after the session has handed over. The
 5 minutes at eager, 15 at normal; at relaxed there is no chain, only a check at the end of each
 turn.
 
+### `session-check`: a session's start and end checks
+
+```
+session-check start|end --session mac|device [--project DIR] [--root DIR] [--as NAME]
+session-check --help
+```
+
+Run from the project's folder (or name it with `--project`). It reads the project's
+`lobster.conf` (`SELF`, `SISTER`, `CLAWS`, `FOLDERS`; `KEY=value` lines, `#` comments, optional
+quotes), asks nothing, changes nothing, and prints one line a fact: first everything to tell the
+person you work for, then the rest.
+
+- **git**: for the project's folder, and for each folder directly in it that is a git repository
+  (a public tools project's checkout), how many files are uncommitted and how many commits are not
+  pushed (counted against the remote branch as last fetched: it never fetches); "no remote (local
+  only)" where there is none, as a fact; an upstream that is gone, or a branch with a remote but
+  no upstream, said plainly. It runs only `git status`, `git remote`, `git log` and `git
+  check-ignore`, with `GIT_OPTIONAL_LOCKS=0`, so not even the index is refreshed.
+- **Folders**: with `--session device`, `~/mnt/<name>` for `SISTER`, each of `CLAWS` (separated by
+  spaces), the last part of each path in `FOLDERS`, `~/mnt/mail` and `~/mnt/lobster-tools`; with
+  `--session mac`, the paths in `FOLDERS` themselves and the mail root. A missing one is named.
+- **Leftovers**: `__pycache__` folders (not in `.git/`, `.venv/` or `_to_delete/`), a problem only
+  where git does not ignore them; `backlog/.locks/` not empty, looked at only where the project
+  keeps tickets (it has `backlog/config.yml`). Removing either is the person's to allow.
+- **`_to_delete/`**: how many things, their total size, and the one put there last.
+- **The diary**: `DIARY.md`'s length in lines beside the length the last handover gave (its
+  `Diary-Lines:` header from `handover --diary`, failing that "N lines" within a few words after
+  "DIARY.md" in its text). A diary shorter than that is the first line printed.
+- **What waits**: items in `inbox/` other than `README.md` and `done/`; files at the top of
+  `dreams/`.
+- **At the end** also: each commit not pushed, by its one line; whether `DIARY.md` has changes not
+  committed; and the diary's length, ready for the handover.
+
+Real output, 14 November 2026, on an invented project in a scratch folder (an outer folder with a
+local history and a checkout with a remote; `kept-scripts` holds the script), the scratch path
+shortened to `SCRATCH`. At the start, everything in order:
+
+```
+$ cd garden-tools-code
+$ ~/projects/code/lobster-tools-code/lobster-tools/session-check start --session mac
+== session-check start for garden-tools (mac), 2026-11-14T16:00:51Z ==
+-- Nothing to tell.
+-- Facts:
+git, garden-tools-code: nothing uncommitted
+git, garden-tools-code: no remote (local only)
+git, garden-tools-code/garden-tools: nothing uncommitted
+git, garden-tools-code/garden-tools: level with origin/main (as last fetched)
+folder reachable: the mail root (SCRATCH/mail)
+__pycache__: none
+_to_delete/: none
+DIARY.md: 10 lines; no handover found to compare with
+inbox/: nothing new
+dreams/: nothing undecided
+```
+
+At the end, with a diary entry not committed and a commit not pushed (exit 1):
+
+```
+$ ~/projects/code/lobster-tools-code/lobster-tools/session-check end --session mac
+== session-check end for garden-tools (mac), 2026-11-14T16:00:52Z ==
+-- To tell the person you work for (4):
+git, garden-tools-code: 1 file uncommitted
+DIARY.md has changes not committed: commit it before the handover
+git, garden-tools-code/garden-tools: 1 commit not pushed to origin/main
+  not pushed: b438d5f Say how to use it
+-- Facts:
+git, garden-tools-code: no remote (local only)
+git, garden-tools-code/garden-tools: nothing uncommitted
+folder reachable: the mail root (SCRATCH/mail)
+__pycache__: none
+_to_delete/: none
+DIARY.md: 11 lines; no handover found to compare with
+inbox/: nothing new
+dreams/: nothing undecided
+for the handover: DIARY.md is 11 lines (lobster-mail handover --diary DIARY.md records it)
+```
+
+After `handover --diary DIARY.md` recorded 11 lines, the diary cut to 5 is the first line at the
+next start:
+
+```
+-- To tell the person you work for (3):
+DIARY.md is shorter than the last handover said: 5 lines now, 11 then. Tell the person before writing anything in it.
+```
+
+**How a session runs it.** Claude Code on the Mac, from the project's folder:
+`~/projects/code/lobster-tools-code/lobster-tools/session-check start --session mac --root
+~/projects/mail` (the `--root` may be left out where `~/.lobster-tools.conf` names the root). A
+Claude session in the desktop app, in the Linux virtual machine, from the connected project folder
+(`cd ~/mnt/<project>`): `python3 ~/mnt/lobster-tools/session-check start --session device`; the
+mail root is found at `~/mnt/mail`. Use `end` in place of `start` before the handover.
+
+| Code | Meaning |
+|------|---------|
+| 0 | Nothing to tell |
+| 1 | Something to tell the person: files uncommitted, commits not pushed, an upstream gone or missing, a folder missing, `__pycache__` not ignored, locks not empty, the diary shorter than the last handover said, and at the end `DIARY.md` not committed |
+| 2 | A wrong argument: no `start` or `end`, no `--session` (or `LOBSTER_MAIL_SESSION`), a project folder that does not exist |
+| 3 | Something cannot be told, every other fact still printed: no `lobster.conf` or one that cannot be read, the project folder not a git repository, `git` not found or not answering within a minute, git status failing, no mail root or no such mailbox |
+
 ## Errors and exit codes
 
 Every failure is one line on standard error, `lobster-mail <verb>: <what happened> (<what to do>)`,
@@ -719,16 +836,20 @@ was changed after it was sent, so ask the sender.
 ```bash
 cd lobster-tools
 python3 -m venv .venv && .venv/bin/pip install -r requirements-dev.txt
-.venv/bin/pytest                # 233 tests, 98% coverage (11 November 2026)
+.venv/bin/pytest                # 302 tests, 98% coverage, about 20 seconds (14 November 2026)
 .venv/bin/ruff check .          # lint
 ```
 
 No test touches the network, a real mailbox or the clock: `tests/tier1/` are pure functions
-(message format, ids, the config reader, the watch loop with an injected clock) and `tests/tier2/`
-run the command in-process against a scratch root with the clock fixed by `LOBSTER_MAIL_NOW` (an
-ISO 8601 time; for tests only). Three tests pin the architectural line: the source names no delete
-and no `subprocess`; every verb leaves the same set of message files (bytes and names) or adds
-exactly the two it says; a hostile body comes back byte for byte.
+(message format, ids, the config reader, the watch loop with an injected clock, session-check's
+parsing and report) and `tests/tier2/` run the commands in-process against a scratch root with the
+clock fixed by `LOBSTER_MAIL_NOW` (an ISO 8601 time; for tests only); session-check's tests put a
+stub `git` on `PATH` that answers from a spec and records every call. Four tests pin the
+architectural line: the source names no delete, and no way of running a program but `subprocess`
+inside `run_git` in `check.py`, which takes only reading git verbs; every verb leaves the same set
+of message files (bytes and names) or adds exactly the two it says; session-check leaves the
+project and the mail root byte for byte the same and gives git only reading verbs; a hostile body
+comes back byte for byte.
 
 Checked by hand against the real thing (10 October 2026): a full exchange on the Mac; the same
 from a Linux shell whose home folder is a mount of the Mac's, where the claim, the delivery and
@@ -751,6 +872,11 @@ set again and handed over, after which none was shown and the old status was in 
 And (10 November 2026) a session named `mac` taking up a duty left by an earlier `mac` with
 `dormant` on it, on a scratch root: `duty take` and `checkin` printed the extra line, `start` its
 step `0.`; the status was still there afterwards; once cleared, all three printed as before.
+And (14 November 2026) `session-check` with real git (2.55.0): on this project's own folder, its
+counts matched `git status`; on an invented project in a scratch folder, start clean (exit 0),
+end with a commit not pushed and the diary not committed (exit 1, the commit listed), and the
+diary cut short after `handover --diary` (the first line); with a checkout whose upstream's branch
+was never pushed it said the upstream was gone.
 
 ## Known limitations and non-goals
 
@@ -838,6 +964,12 @@ step `0.`; the status was still there afterwards; once cleared, all three printe
   seconds (an hour), not 1500. If the duty is given up or taken by another session while it
   watches, `wait` stops with exit 3. A session running `wait` in the background is woken by an
   empty return once an hour instead of twice. Nothing else in its output changes.
+
+- 14 November 2026: a second command, `session-check start|end --session mac|device`, prints the
+  facts a session checks at its start and end (git, folders, leftovers, `_to_delete/`, the diary,
+  what waits); see "`session-check`". `handover` takes `--diary FILE`, which records the diary's
+  length in a new header, `Diary-Lines`, for the next `session-check start` to compare. `start`'s
+  step 1 now says to run `session-check`. Nothing else prints differently.
 
 ## Contributing
 

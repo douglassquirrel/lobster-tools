@@ -267,7 +267,8 @@ def publish(box, dest_box, id_, data):
     return dest
 
 
-def deliver(root, me, them, subject, body, in_reply_to, dry_run, as_json, verb_past, verb):
+def deliver(root, me, them, subject, body, in_reply_to, dry_run, as_json, verb_past, verb,
+            extra=None):
     """Sends from one mailbox take turns (Request 5): the lock on ME's folder is held from reading
     the ids already taken until both copies are written, and goes when the folder is closed.
     Where the file system refuses the lock, the send goes ahead unlocked, as it did before."""
@@ -278,12 +279,13 @@ def deliver(root, me, them, subject, body, in_reply_to, dry_run, as_json, verb_p
         except OSError:
             pass
         return deliver_locked(me, them, subject, body, in_reply_to, dry_run, as_json, verb_past,
-                              verb)
+                              verb, extra)
     finally:
         os.close(fd)
 
 
-def deliver_locked(me, them, subject, body, in_reply_to, dry_run, as_json, verb_past, verb):
+def deliver_locked(me, them, subject, body, in_reply_to, dry_run, as_json, verb_past, verb,
+                   extra=None):
     now = clock()
     taken = them.ids() | me.ids(["sent", "tmp"])
     id_ = message.unique_id(message.make_id(now, me.name, subject), taken)
@@ -297,6 +299,7 @@ def deliver_locked(me, them, subject, body, in_reply_to, dry_run, as_json, verb_
     }
     if in_reply_to:
         headers["In-Reply-To"] = in_reply_to
+    headers.update(extra or {})
     data = message.render(headers, body)
     dest, copy = them.file("new", id_), me.file("sent", id_)
     if dry_run:
@@ -1125,8 +1128,9 @@ def cmd_handover(args, stdin=None):
     now = clock()
     default = "Handover %s" % now.astimezone(timezone.utc).strftime("%Y-%m-%d %H:%MZ")
     subject = check_subject(args.subject if args.subject is not None else default)
+    extra = {"Diary-Lines": str(diary_lines(args.diary))} if args.diary else None
     body = read_body(args.body, stdin)
-    deliver(root, me, me, subject, body, None, args.dry_run, False, "Sent", "send")
+    deliver(root, me, me, subject, body, None, args.dry_run, False, "Sent", "send", extra)
     if args.dry_run or not args.session:
         return EXIT_OK
     try:
@@ -1144,6 +1148,16 @@ def cmd_handover(args, stdin=None):
         print("Duty for %s released by %s at %s; its folder is now %s"
               % (me.name, args.session, message.format_date(now), logged))
     return EXIT_OK
+
+
+def diary_lines(path):
+    """The diary's length in lines, as `wc -l` counts them, for a handover's Diary-Lines header."""
+    try:
+        with open(path, "rb") as handle:
+            return handle.read().count(b"\n")
+    except FileNotFoundError:
+        raise Failure(EXIT_USAGE, "--diary %s: no such file, so its length cannot be recorded; "
+                      "nothing was sent" % path)
 
 
 def reporting(state):
@@ -1166,6 +1180,9 @@ def report_duty_status(box, state):
 
 START_INSTRUCTIONS = """== What to do now ==
 %(step0)s1. Read the project's guidance as usual; the handover above says where the last session stopped.
+   Then, from the project's folder, run session-check (it sits beside lobster-mail) and
+   tell the person you work for what it says:
+   session-check start --session NAME
 2. Report what is above to the person you work for: the handover, and each message waiting, in a
    sentence each. Act on it only as your project's rules allow: by default, not until told to;
    a project's rules may say something else, and they take precedence.
@@ -1387,6 +1404,9 @@ def build_parser():
     sub.add_argument("--session", metavar="NAME",
                      help="the session giving up the duty (or LOBSTER_MAIL_SESSION)")
     sub.add_argument("--subject", metavar="TEXT", help="default: Handover and the UTC time")
+    sub.add_argument("--diary", metavar="FILE",
+                     help="the project's DIARY.md: its length in lines is recorded in a "
+                          "Diary-Lines header, which session-check compares at the next start")
     sub.add_argument("body", metavar="BODY.md", help="the note: a file, or - for standard input")
 
     sub = verb("status", "show the status the session on duty reports about itself, or set or "

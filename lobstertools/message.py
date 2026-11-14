@@ -6,6 +6,7 @@
     Subject: Request 11: phonemes
     Id: 2026-10-10-0829-training-video-request-11-phonemes
     In-Reply-To: <id>            (only on a reply)
+    Diary-Lines: <n>             (only on a handover given --diary)
     Body-SHA-256: <hex>
 
     <the body, exactly as the sender wrote it>
@@ -20,7 +21,7 @@ from collections import namedtuple
 from datetime import datetime, timezone
 
 REQUIRED = ["From", "To", "Date", "Subject", "Id", "Body-SHA-256"]
-ORDER = ["From", "To", "Date", "Subject", "Id", "In-Reply-To", "Body-SHA-256"]
+ORDER = ["From", "To", "Date", "Subject", "Id", "In-Reply-To", "Diary-Lines", "Body-SHA-256"]
 SLUG_LENGTH = 40
 
 Parsed = namedtuple("Parsed", "headers body")
