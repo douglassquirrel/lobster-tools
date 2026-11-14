@@ -704,8 +704,11 @@ person you work for, then the rest.
   (a public tools project's checkout), how many files are uncommitted and how many commits are not
   pushed (counted against the remote branch as last fetched: it never fetches); "no remote (local
   only)" where there is none, as a fact; an upstream that is gone, or a branch with a remote but
-  no upstream, said plainly. It runs only `git status`, `git remote`, `git log` and `git
-  check-ignore`, with `GIT_OPTIONAL_LOCKS=0`, so not even the index is refreshed.
+  no upstream, said plainly; and each stash, one line for each, newest first, with git's own line
+  for it and when it was made ("no stash" where there is none, as a fact). It runs only `git
+  status`, `git remote`, `git log`, `git check-ignore` and `git stash list`, with
+  `GIT_OPTIONAL_LOCKS=0`, so not even the index is refreshed. It never applies, pops, drops, clears
+  or makes a stash.
 - **Folders**: with `--session device`, `~/mnt/<name>` for `SISTER`, each of `CLAWS` (separated by
   spaces), the last part of each path in `FOLDERS`, `~/mnt/mail` and `~/mnt/lobster-tools`; with
   `--session mac`, the paths in `FOLDERS` themselves and the mail root. A missing one is named.
@@ -719,7 +722,8 @@ person you work for, then the rest.
 - **What waits**: items in `inbox/` other than `README.md` and `done/`; files at the top of
   `dreams/`.
 - **At the end** also: each commit not pushed, by its one line; whether `DIARY.md` has changes not
-  committed; and the diary's length, ready for the handover.
+  committed; each stash's line goes on to say "put it back before the handover, or tell the person
+  it is being left and why"; and the diary's length, ready for the handover.
 
 Real output, 14 November 2026, on an invented project in a scratch folder (an outer folder with a
 local history and a checkout with a remote; `kept-scripts` holds the script), the scratch path
@@ -728,13 +732,15 @@ shortened to `SCRATCH`. At the start, everything in order:
 ```
 $ cd garden-tools-code
 $ ~/projects/code/lobster-tools-code/lobster-tools/session-check start --session mac
-== session-check start for garden-tools (mac), 2026-11-14T16:00:51Z ==
+== session-check start for garden-tools (mac), 2026-11-14T20:20:08Z ==
 -- Nothing to tell.
 -- Facts:
 git, garden-tools-code: nothing uncommitted
 git, garden-tools-code: no remote (local only)
+git, garden-tools-code: no stash
 git, garden-tools-code/garden-tools: nothing uncommitted
 git, garden-tools-code/garden-tools: level with origin/main (as last fetched)
+git, garden-tools-code/garden-tools: no stash
 folder reachable: the mail root (SCRATCH/mail)
 __pycache__: none
 _to_delete/: none
@@ -747,15 +753,17 @@ At the end, with a diary entry not committed and a commit not pushed (exit 1):
 
 ```
 $ ~/projects/code/lobster-tools-code/lobster-tools/session-check end --session mac
-== session-check end for garden-tools (mac), 2026-11-14T16:00:52Z ==
+== session-check end for garden-tools (mac), 2026-11-14T20:20:08Z ==
 -- To tell the person you work for (4):
 git, garden-tools-code: 1 file uncommitted
 DIARY.md has changes not committed: commit it before the handover
 git, garden-tools-code/garden-tools: 1 commit not pushed to origin/main
-  not pushed: b438d5f Say how to use it
+  not pushed: dd73211 Say how to use it
 -- Facts:
 git, garden-tools-code: no remote (local only)
+git, garden-tools-code: no stash
 git, garden-tools-code/garden-tools: nothing uncommitted
+git, garden-tools-code/garden-tools: no stash
 folder reachable: the mail root (SCRATCH/mail)
 __pycache__: none
 _to_delete/: none
@@ -773,6 +781,30 @@ next start:
 DIARY.md is shorter than the last handover said: 5 lines now, 11 then. Tell the person before writing anything in it.
 ```
 
+With a stash left in the checkout (made with `git stash push -m "try the test without the
+change"`), the start names it (exit 1), and the end says what to do with it:
+
+```
+$ ~/projects/code/lobster-tools-code/lobster-tools/session-check start --session mac
+== session-check start for garden-tools (mac), 2026-11-14T20:19:57Z ==
+-- To tell the person you work for (1):
+git, garden-tools-code/garden-tools: stash@{0}: On main: try the test without the change (made 2026-11-14 20:19:56 +0000)
+-- Facts:
+git, garden-tools-code: nothing uncommitted
+git, garden-tools-code: no remote (local only)
+git, garden-tools-code: no stash
+git, garden-tools-code/garden-tools: nothing uncommitted
+git, garden-tools-code/garden-tools: level with origin/main (as last fetched)
+...
+$ ~/projects/code/lobster-tools-code/lobster-tools/session-check end --session mac
+== session-check end for garden-tools (mac), 2026-11-14T20:19:57Z ==
+-- To tell the person you work for (1):
+git, garden-tools-code/garden-tools: stash@{0}: On main: try the test without the change (made 2026-11-14 20:19:56 +0000): put it back before the handover, or tell the person it is being left and why
+...
+```
+
+The time is when the stash was made, as git gives it, with the offset of the machine that made it.
+
 **How a session runs it.** Claude Code on the Mac, from the project's folder:
 `~/projects/code/lobster-tools-code/lobster-tools/session-check start --session mac --root
 ~/projects/mail` (the `--root` may be left out where `~/.lobster-tools.conf` names the root). A
@@ -783,9 +815,9 @@ mail root is found at `~/mnt/mail`. Use `end` in place of `start` before the han
 | Code | Meaning |
 |------|---------|
 | 0 | Nothing to tell |
-| 1 | Something to tell the person: files uncommitted, commits not pushed, an upstream gone or missing, a folder missing, `__pycache__` not ignored, locks not empty, the diary shorter than the last handover said, and at the end `DIARY.md` not committed |
+| 1 | Something to tell the person: files uncommitted, commits not pushed, an upstream gone or missing, a folder missing, `__pycache__` not ignored, locks not empty, the diary shorter than the last handover said, a stash, and at the end `DIARY.md` not committed |
 | 2 | A wrong argument: no `start` or `end`, no `--session` (or `LOBSTER_MAIL_SESSION`), a project folder that does not exist |
-| 3 | Something cannot be told, every other fact still printed: no `lobster.conf` or one that cannot be read, the project folder not a git repository, `git` not found or not answering within a minute, git status failing, no mail root or no such mailbox |
+| 3 | Something cannot be told, every other fact still printed: no `lobster.conf` or one that cannot be read, the project folder not a git repository, `git` not found or not answering within a minute, git status or git stash list failing, no mail root or no such mailbox |
 
 ## Errors and exit codes
 
@@ -836,7 +868,7 @@ was changed after it was sent, so ask the sender.
 ```bash
 cd lobster-tools
 python3 -m venv .venv && .venv/bin/pip install -r requirements-dev.txt
-.venv/bin/pytest                # 302 tests, 98% coverage, about 20 seconds (14 November 2026)
+.venv/bin/pytest                # 318 tests, 98% coverage, about 25 seconds (14 November 2026)
 .venv/bin/ruff check .          # lint
 ```
 
@@ -846,7 +878,7 @@ parsing and report) and `tests/tier2/` run the commands in-process against a scr
 clock fixed by `LOBSTER_MAIL_NOW` (an ISO 8601 time; for tests only); session-check's tests put a
 stub `git` on `PATH` that answers from a spec and records every call. Four tests pin the
 architectural line: the source names no delete, and no way of running a program but `subprocess`
-inside `run_git` in `check.py`, which takes only reading git verbs; every verb leaves the same set
+inside `run_git` in `check.py`, which takes only reading git verbs (`stash` only as `stash list`); every verb leaves the same set
 of message files (bytes and names) or adds exactly the two it says; session-check leaves the
 project and the mail root byte for byte the same and gives git only reading verbs; a hostile body
 comes back byte for byte.
@@ -876,7 +908,11 @@ And (14 November 2026) `session-check` with real git (2.55.0): on this project's
 counts matched `git status`; on an invented project in a scratch folder, start clean (exit 0),
 end with a commit not pushed and the diary not committed (exit 1, the commit listed), and the
 diary cut short after `handover --diary` (the first line); with a checkout whose upstream's branch
-was never pushed it said the upstream was gone.
+was never pushed it said the upstream was gone. And (14 November 2026) its stash check with real
+git (2.55.0), on an invented project in a scratch folder: no stash anywhere (exit 0, "no stash" for
+each repository, one of them with no commit yet), then a stash in the checkout named at the start
+and, with what to do, at the end (exit 1 both); every file under each `.git` hashed the same before
+and after.
 
 ## Known limitations and non-goals
 
@@ -970,6 +1006,10 @@ was never pushed it said the upstream was gone.
   what waits); see "`session-check`". `handover` takes `--diary FILE`, which records the diary's
   length in a new header, `Diary-Lines`, for the next `session-check start` to compare. `start`'s
   step 1 now says to run `session-check`. Nothing else prints differently.
+- 14 November 2026: `session-check` also lists any `git stash`, at the start and at the end, one
+  line each under what to tell (exit 1), newest first, with when it was made; at the end the line
+  says to put it back before the handover or say why it is left. A repository with none gets the
+  fact "no stash". It only reads (`git stash list`), and never touches a stash.
 
 ## Contributing
 

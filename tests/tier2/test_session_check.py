@@ -41,6 +41,13 @@ elif verb == "log":
     sys.stdout.write(mine["log"])
 elif verb == "check-ignore":
     sys.exit(0 if rest[-1] in mine.get("ignored", []) else 1)
+elif verb == "stash" and rest[:1] == ["list"]:
+    if mine.get("stash_hangs"):
+        time.sleep(5)
+    if mine.get("stash_fails"):
+        sys.stderr.write("fatal: stash list went wrong\n")
+        sys.exit(128)
+    sys.stdout.write("".join("\0".join(s) + "\n" for s in mine.get("stashes", [])))
 else:
     sys.stderr.write("stub git: unexpected verb %%s\n" %% verb)
     sys.exit(2)
@@ -57,6 +64,9 @@ def branch(upstream="origin/main", ahead=0, paths=()):
     items += ["? " + p for p in paths]
     return "".join(i + "\0" for i in items)
 
+
+STASH_0 = ["stash@{0}", "2026-11-02 08:15:00 +0000", "WIP on main: 250c951 Two"]
+STASH_1 = ["stash@{1}", "2026-11-01 09:30:00 +0100", "On main: café notes, \"quoted\" $HOME"]
 
 LEVEL = {"status": branch(), "remote": "origin\n"}
 LOCAL = {"status": branch(upstream=None), "remote": ""}
@@ -156,8 +166,10 @@ def test_a_clean_project_prints_every_fact_and_exits_0(env):
         "-- Facts:",
         "git, garden-tools-code: nothing uncommitted",
         "git, garden-tools-code: no remote (local only)",
+        "git, garden-tools-code: no stash",
         "git, garden-tools-code/garden-tools: nothing uncommitted",
         "git, garden-tools-code/garden-tools: level with origin/main (as last fetched)",
+        "git, garden-tools-code/garden-tools: no stash",
         "folder reachable: the mail root (%s)" % env.root,
         "__pycache__: none",
         "_to_delete/: none",
@@ -457,14 +469,23 @@ def test_the_project_and_the_mail_are_byte_for_byte_the_same_and_git_only_read(e
     (env.project / "backlog" / "config.yml").write_text("x\n", encoding="utf-8")
     checkout = env.spec["repos"][str(env.project / "garden-tools")]
     checkout["status"], checkout["log"] = branch(ahead=1), "250c951 One\n"
+    checkout["stashes"] = [STASH_0]
+    for repo in (env.project, env.project / "garden-tools"):
+        (repo / ".git" / "refs").mkdir()
+        (repo / ".git" / "refs" / "stash").write_text("9f1e2d3\n", encoding="utf-8")
+        (repo / ".git" / "logs" / "refs").mkdir(parents=True)
+        (repo / ".git" / "logs" / "refs" / "stash").write_text("0 9f1e2d3 t 1 +0000\tx\n",
+                                                               encoding="utf-8")
     env.handover("DIARY.md is 10 lines.\n")
     before = (tree(env.project), tree(env.root))
     env.run("start")
     env.run("end")
     assert (tree(env.project), tree(env.root)) == before
     verbs = {c["args"][2] for c in env.calls()}
-    assert verbs <= {"status", "remote", "log", "check-ignore"}
-    assert verbs == {"status", "remote", "log", "check-ignore"}
+    assert verbs <= {"status", "remote", "log", "check-ignore", "stash"}
+    assert verbs == {"status", "remote", "log", "check-ignore", "stash"}
+    stash_calls = {tuple(c["args"][3:]) for c in env.calls() if c["args"][2] == "stash"}
+    assert stash_calls == {("list", "--format=%gd%x00%ci%x00%gs")}
     assert {c["locks"] for c in env.calls()} == {"0"}
     assert all(c["args"][0] == "-C" for c in env.calls())
 
@@ -472,6 +493,21 @@ def test_the_project_and_the_mail_are_byte_for_byte_the_same_and_git_only_read(e
 def test_run_git_refuses_any_verb_not_on_the_reading_list():
     with pytest.raises(ValueError):
         check.run_git("/nowhere", ["commit", "-m", "x"])
+
+
+@pytest.mark.parametrize("args", [["stash"], ["stash", "pop"], ["stash", "drop"], ["stash", "clear"],
+                                  ["stash", "push"], ["stash", "apply"], ["stash", "--", "list"]])
+def test_run_git_refuses_every_stash_verb_but_list(args):
+    with pytest.raises(ValueError):
+        check.run_git("/nowhere", args)
+
+
+def test_run_git_runs_stash_list(env):
+    env.spec["repos"][str(env.project)]["stashes"] = [["stash@{0}", "2026-11-01 09:30:00 +0000",
+                                                       "On main: x"]]
+    (env.tmp / "git-spec.json").write_text(json.dumps(env.spec), encoding="utf-8")
+    code, out, error = check.run_git(str(env.project), ["stash", "list"])
+    assert (code, out, error) == (0, b"stash@{0}\x002026-11-01 09:30:00 +0000\x00On main: x\n", "")
 
 
 # The command line
@@ -596,3 +632,64 @@ def test_the_diary_lines_header_a_handover_wrote_is_read_back(env):
     assert code == 1
     assert tell(out)[0].startswith("DIARY.md is shorter than the last handover said: 10 lines "
                                    "now, 12 then.")
+
+
+# Stashes (Request 17; PLAN.md "`session-check` reports any stash")
+
+def test_two_stashes_in_the_checkout_are_told_newest_first_and_make_exit_1(env):
+    env.spec["repos"][str(env.project / "garden-tools")]["stashes"] = [STASH_0, STASH_1]
+    env.handover("DIARY.md is 10 lines.\n")
+    code, out, err = env.run("start")
+    assert (code, err) == (1, "")
+    assert tell(out) == [
+        ("git, garden-tools-code/garden-tools: stash@{0}: WIP on main: 250c951 Two "
+        "(made 2026-11-02 08:15:00 +0000)"),
+        ("git, garden-tools-code/garden-tools: stash@{1}: On main: café notes, \"quoted\" $HOME "
+        "(made 2026-11-01 09:30:00 +0100)"),
+    ]
+    assert "git, garden-tools-code: no stash" in facts(out)
+    assert not any("garden-tools-code/garden-tools: no stash" in x for x in facts(out))
+
+
+def test_a_stash_in_the_outer_folder_is_named_with_that_folder(env):
+    env.spec["repos"][str(env.project)]["stashes"] = [STASH_0]
+    env.handover("DIARY.md is 10 lines.\n")
+    code, out, err = env.run("start")
+    assert (code, err) == (1, "")
+    assert tell(out) == [("git, garden-tools-code: stash@{0}: WIP on main: 250c951 Two "
+                         "(made 2026-11-02 08:15:00 +0000)")]
+    assert "git, garden-tools-code/garden-tools: no stash" in facts(out)
+
+
+def test_at_the_end_a_stash_line_says_to_put_it_back_or_say_why_it_is_left(env):
+    env.spec["repos"][str(env.project / "garden-tools")]["stashes"] = [STASH_0]
+    env.handover("DIARY.md is 10 lines.\n")
+    code, out, err = env.run("end")
+    assert (code, err) == (1, "")
+    assert tell(out) == [
+        ("git, garden-tools-code/garden-tools: stash@{0}: WIP on main: 250c951 Two "
+        "(made 2026-11-02 08:15:00 +0000): put it back before the handover, or tell the person it "
+        "is being left and why")]
+
+
+def test_a_stash_list_that_fails_cannot_be_told_and_the_rest_is_printed(env):
+    env.spec["repos"][str(env.project)]["stash_fails"] = True
+    env.handover("DIARY.md is 10 lines.\n")
+    code, out, err = env.run("start")
+    assert (code, err) == (3, "")
+    assert tell(out) == [("git, garden-tools-code: git stash list failed: "
+                         "fatal: stash list went wrong")]
+    assert "git, garden-tools-code: no remote (local only)" in facts(out)
+    assert "git, garden-tools-code/garden-tools: no stash" in facts(out)
+    assert not any(x == "git, garden-tools-code: no stash" for x in facts(out))
+
+
+def test_a_stash_list_that_hangs_is_given_up_after_the_timeout(env, monkeypatch):
+    monkeypatch.setattr(check, "GIT_TIMEOUT", 0.3)
+    env.spec["repos"][str(env.project / "garden-tools")]["stash_hangs"] = True
+    env.handover("DIARY.md is 10 lines.\n")
+    code, out, err = env.run("start")
+    assert (code, err) == (3, "")
+    assert tell(out) == [("git, garden-tools-code/garden-tools: git stash list gave no answer in "
+                         "0.3 seconds, so whether it has a stash cannot be told")]
+    assert "git, garden-tools-code: no stash" in facts(out)

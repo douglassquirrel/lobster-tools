@@ -1,7 +1,8 @@
 """session-check: the facts a session checks at its start and its end (Request 16). Reads only.
 
 It reads the project's folder, its lobster.conf and the mailbox's sent/ copies, and runs git only
-through run_git, with reading verbs only (PLAN.md "Settled" 43). It writes nothing, anywhere.
+through run_git, with reading verbs only (PLAN.md "Settled" 43; `stash` only as `stash list`,
+"Settled" 46). It writes nothing, anywhere.
 """
 import argparse
 import os
@@ -75,6 +76,17 @@ def parse_status(data):
     return status
 
 
+def parse_stashes(data):
+    """`git stash list --format=%gd%x00%ci%x00%gs`: (name, when made, git's words) for each
+    stash, newest first, as git lists them."""
+    found = []
+    for line in data.decode("utf-8", "replace").splitlines():
+        if line.strip():
+            name, when, words = (line.split("\0", 2) + ["", ""])[:3]
+            found.append((name, when, words))
+    return found
+
+
 def size_text(count):
     if count < 1000:
         return "%d bytes" % count
@@ -114,8 +126,15 @@ def report(findings):
 
 # Running git: reading verbs only, never a lock, never a prompt ("Settled" 43).
 
-GIT_READING = ("status", "remote", "log", "check-ignore")
+GIT_READING = ("status", "remote", "log", "check-ignore", "stash list")
 GIT_TIMEOUT = 60
+STASH_FORMAT = "--format=%gd%x00%ci%x00%gs"     # its name, when it was made, git's words
+STASH_AT_THE_END = ": put it back before the handover, or tell the person it is being left and why"
+
+
+def reading(args):
+    """Whether ARGS begin with one of the reading verbs (`stash` only as `stash list`)."""
+    return any(list(args[:len(verb.split())]) == verb.split() for verb in GIT_READING)
 
 
 class NoGit(Exception):
@@ -128,8 +147,8 @@ class GitSilent(Exception):
 
 def run_git(repo, args):
     """(exit code, stdout bytes, first line of stderr) of `git -C REPO ARGS`."""
-    if not args or args[0] not in GIT_READING:
-        raise ValueError("session-check runs only reading git verbs, not %r" % (args[:1],))
+    if not reading(args):
+        raise ValueError("session-check runs only reading git verbs, not %r" % (args[:2],))
     env = dict(os.environ, GIT_OPTIONAL_LOCKS="0", GIT_TERMINAL_PROMPT="0", LC_ALL="C")
     try:
         done = subprocess.run(["git", "-C", repo] + list(args), check=False,
@@ -222,6 +241,7 @@ class Check:
         else:
             self.add(fact("git, %s: nothing uncommitted" % label))
         self.push_facts(repo, label, status)
+        self.stash_facts(repo, label)
         if diary and self.args.when == "end" and "DIARY.md" in paths:
             self.add(problem("DIARY.md has changes not committed: commit it before the handover"))
 
@@ -247,6 +267,25 @@ class Check:
                 if answer is not None and answer[0] == 0:
                     for text in answer[1].decode("utf-8", "replace").splitlines():
                         self.add(problem("  not pushed: " + text))
+
+    def stash_facts(self, repo, label):
+        try:
+            answer = self.git(repo, ["stash", "list", STASH_FORMAT])
+        except GitSilent:
+            self.add(cannot("git, %s: git stash list gave no answer in %s seconds, so whether it "
+                            "has a stash cannot be told" % (label, GIT_TIMEOUT)))
+            return
+        if answer is None:
+            return
+        if answer[0] != 0:
+            self.add(cannot("git, %s: git stash list failed: %s" % (label, answer[2])))
+            return
+        stashes = parse_stashes(answer[1])
+        advice = STASH_AT_THE_END if self.args.when == "end" else ""
+        for name, when, words in stashes:
+            self.add(problem("git, %s: %s: %s (made %s)%s" % (label, name, words, when, advice)))
+        if not stashes:
+            self.add(fact("git, %s: no stash" % label))
 
     # folders
 

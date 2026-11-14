@@ -142,3 +142,23 @@ def test_what_cannot_be_told_is_exit_3_even_beside_a_problem():
     assert code == 3
     assert lines[:3] == ["-- To tell the person you work for (2):", "a problem",
                          "no lobster.conf"]
+
+
+# git stash list --format=%gd%x00%ci%x00%gs ("Things checked" 11)
+
+def test_each_stash_is_read_as_its_name_its_time_and_gits_words_newest_first():
+    out = ("stash@{0}\x002026-11-02 08:15:00 +0000\x00WIP on main: 250c951 Two\n"
+           "stash@{1}\x002026-11-01 09:30:00 +0100\x00On main: café, \"q\" $HOME\n").encode()
+    assert check.parse_stashes(out) == [
+        ("stash@{0}", "2026-11-02 08:15:00 +0000", "WIP on main: 250c951 Two"),
+        ("stash@{1}", "2026-11-01 09:30:00 +0100", "On main: café, \"q\" $HOME"),
+    ]
+
+
+def test_no_stash_is_an_empty_list():
+    assert check.parse_stashes(b"") == []
+    assert check.parse_stashes(b"\n") == []
+
+
+def test_a_stash_line_without_the_separators_is_kept_whole_as_its_name():
+    assert check.parse_stashes(b"stash@{0}: WIP on main\n") == [("stash@{0}: WIP on main", "", "")]

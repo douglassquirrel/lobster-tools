@@ -40,4 +40,4 @@ def test_check_py_runs_a_program_only_inside_run_git():
 
 def test_run_git_keeps_to_the_reading_verbs():
     from lobstertools import check
-    assert check.GIT_READING == ("status", "remote", "log", "check-ignore")
+    assert check.GIT_READING == ("status", "remote", "log", "check-ignore", "stash list")
