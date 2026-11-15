@@ -1,0 +1,20 @@
+#!/bin/sh
+# Stand-in for apt-get in fetch-deb's tests (tests/tier2/test_fetch_deb.py). Linked onto a test's
+# PATH; never written by a test. The test's folder is $DEBSTUB_DIR: each call is appended to its
+# `calls` (the program's path, the folder it ran in, then each argument, each ended by a NUL, the
+# call ended by "--end--" and a NUL). Files there change what it does:
+#   apt-fails       print the file to stderr and exit 100, writing nothing
+#   apt-hangs       sleep 5 seconds first
+#   apt-skips-NAME  write no .deb for package NAME
+# `download NAME...` writes NAME_1.0-1_arm64.deb in the folder it runs in, holding NAME.
+d=$DEBSTUB_DIR
+printf '%s\0' "$0" "$PWD" "$@" "--end--" >> "$d/calls"
+if [ -f "$d/apt-hangs" ]; then sleep 5; fi
+if [ -f "$d/apt-fails" ]; then cat "$d/apt-fails" >&2; exit 100; fi
+if [ "$1" != "download" ]; then echo "stand-in apt-get: not expected: $*" >&2; exit 2; fi
+shift
+for p in "$@"; do
+    if [ -f "$d/apt-skips-$p" ]; then continue; fi
+    printf '%s\n' "$p" > "${p}_1.0-1_arm64.deb"
+    echo "Get:1 http://deb.example stand-in $p arm64 1.0-1"
+done

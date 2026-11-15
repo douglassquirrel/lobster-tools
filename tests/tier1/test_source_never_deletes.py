@@ -1,14 +1,15 @@
 """CLAUDE.md non-negotiable 1: the package never deletes and never runs anything, but for the two
 exceptions settled: session-check runs git, with reading verbs only, from run_git in check.py and
 nowhere else (PLAN.md "Settled" 43); prepare-venv runs `python3 -m venv`, the venv's `pip install -r`
-and its import check, from run_program in prepare.py and nowhere else ("Settled" 49). Pinned by
-reading the source, before any test runs it."""
+and its import check, from run_program in prepare.py and nowhere else ("Settled" 49); fetch-deb runs
+`apt-get download` and `dpkg-deb -x`, from run_program in fetchdeb.py and nowhere else ("Settled"
+54). Pinned by reading the source, before any test runs it."""
 import pathlib
 import re
 
 PACKAGE = pathlib.Path(__file__).resolve().parents[2]
 SOURCES = (sorted((PACKAGE / "lobstertools").glob("*.py"))
-           + [PACKAGE / "lobster-mail", PACKAGE / "session-check", PACKAGE / "prepare-venv"])
+           + [PACKAGE / "lobster-mail", PACKAGE / "session-check", PACKAGE / "prepare-venv", PACKAGE / "fetch-deb"])
 DELETE = re.compile(r"os\.remove\b|os\.unlink\b|shutil\.rmtree\b|\.unlink\(|\brmdir\b")
 RUNS = re.compile(r"\bsubprocess\b|\bos\.system\b|\bos\.popen\b|\bos\.exec|\bos\.spawn")
 
@@ -26,7 +27,7 @@ def test_the_source_names_no_delete():
 
 def test_nothing_but_check_py_and_prepare_py_names_a_way_to_run_a_program():
     found = ["%s:%d: %s" % (p.name, n, t.strip()) for p in SOURCES
-             if p.name not in ("check.py", "prepare.py")
+             if p.name not in ("check.py", "prepare.py", "fetchdeb.py")
              for n, t in lines(p) if RUNS.search(t)]
     assert found == []
 
@@ -43,6 +44,11 @@ def runs_outside(name, function):
 
 def test_check_py_runs_a_program_only_inside_run_git():
     assert runs_outside("check.py", "run_git") == []
+
+
+def test_fetchdeb_py_runs_a_program_only_inside_run_program():
+    assert runs_outside("fetchdeb.py", "run_program") == []
+    assert "subprocess.run(" in (PACKAGE / "lobstertools" / "fetchdeb.py").read_text("utf-8")
 
 
 def test_prepare_py_runs_a_program_only_inside_run_program():
@@ -84,3 +90,29 @@ def test_run_program_refuses_anything_else_before_running_it():
             assert str(error).startswith("prepare-venv runs only")
         else:
             raise AssertionError("ran %r" % argv)
+
+
+FETCH_ALLOWED = [["/usr/bin/apt-get", "download", "librsvg2-bin", "librsvg2-2"],
+                 ["/usr/bin/dpkg-deb", "-x", "/w/d/librsvg2-2_1.0_arm64.deb", "/w/root"]]
+FETCH_REFUSED = [["/usr/bin/apt-get", "install", "librsvg2-bin"],
+                 ["/usr/bin/apt-get", "download"],
+                 ["/usr/bin/apt-get", "download", "-o", "Dir=/x"],
+                 ["/usr/bin/apt-get", "download", "x;rm"],
+                 ["/usr/bin/dpkg-deb", "-x", "/w/a.deb"],
+                 ["/usr/bin/dpkg-deb", "--build", "/w/a", "/w/b"],
+                 ["/usr/bin/dpkg", "-i", "/w/a.deb"],
+                 ["rm", "-rf", "/"]]
+
+
+def test_fetch_deb_runs_only_its_two_argument_lists():
+    from lobstertools import fetchdeb
+    assert [fetchdeb.allowed(a) for a in FETCH_ALLOWED] == [True, True]
+    assert [fetchdeb.allowed(a) for a in FETCH_REFUSED] == [False] * len(FETCH_REFUSED)
+    for argv in FETCH_REFUSED:
+        try:
+            fetchdeb.run_program(argv)
+        except ValueError as error:
+            assert str(error).startswith("fetch-deb runs only")
+        else:
+            raise AssertionError("ran %r" % argv)
+

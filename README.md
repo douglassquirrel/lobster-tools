@@ -26,6 +26,11 @@ checks the model's files and prints the `export` lines for `eval`. Each project'
 a small file in its checkout, `prepare-venv.conf`. It runs only `python3 -m venv`, `pip install -r`
 and an import check, and writes only that one config file.
 
+The fourth is **`fetch-deb`**, for the same virtual machine, which has no root: it fetches a program
+from Debian packages (`apt-get download`), unpacks them into a folder (`dpkg-deb -x`), writes a small
+wrapper that puts their libraries on `LD_LIBRARY_PATH`, and prints the `export` line naming it, such
+as `RSVG_CONVERT` for `rsvg-convert`.
+
 ## Requirements
 
 - macOS with the command-line developer tools, which give `/usr/bin/python3` (Python 3.9 or
@@ -43,6 +48,7 @@ cd lobster-tools
 ./lobster-mail --help
 ./session-check --help
 ./prepare-venv --help
+./fetch-deb --help
 ```
 
 The command is run as `./lobster-mail` from the checkout, as every example below does; nothing
@@ -931,6 +937,56 @@ checkout; then the project's commands find their python in `<PREFIX>_PYTHON`.
 | 2 | Refused before anything ran: the venv inside the checkout; no `prepare-venv.conf`, or one that cannot be read or used; the requirements file missing; `--model` or `--conf` missing where the file calls for them, or given where it does not; `--model` holding a line break; a malformed `--set`, one with a line break, one for the model setting, or `--set` without `--conf`; `--tmpdir` inside the checkout; `--project` or `--venv` missing |
 | 3 | Something failed while doing it: no `python3` on `PATH`; `venv` or `pip` exited non-zero (its last five lines are shown; the venv is kept, so the next run installs again); the packages installed but the import still fails; the config cannot be read, used or written; `--tmpdir` cannot be made or written; the model folder or a model file missing (this one alone still prints the export lines, the venv and config being good) |
 
+### `fetch-deb`: a program from Debian packages, without root
+
+```
+fetch-deb --into DIR --program NAME --var VAR [--dry-run] PACKAGE...
+fetch-deb --help
+```
+
+For the Linux virtual machine (any Debian or Ubuntu with apt), where nothing can be installed as root.
+In order:
+
+1. **Names checked first**, exit 2, before anything runs: `--program` a plain program name, `--var`
+   a variable name, each `PACKAGE` a Debian package name (small letters, figures, `+ - .`), so none
+   can be read as an option or a path.
+2. **Reuse.** When `DIR/bin/NAME` and the program it runs are both there, it prints the line and runs
+   nothing.
+3. **The download**: `apt-get download PACKAGE...` (no root; the network), in a new folder
+   `DIR/download-…`. A failure is refused, exit 3, with apt's last five lines; the folder is named and
+   left, and nothing is written in `DIR/bin`. A download that gives fewer files than packages is
+   refused too.
+4. **The unpacking**: `dpkg-deb -x` of each file into `DIR/root`. The program is looked for in
+   `usr/bin`, `bin`, `usr/sbin`, `sbin` and `usr/local/bin` under it; not found is exit 3, and nothing
+   is written in `DIR/bin`.
+5. **The wrapper** `DIR/bin/NAME`, a `/bin/sh` script, mode 755, written beside and renamed into place:
+   it puts every folder under `DIR/root` that holds a shared library first on `LD_LIBRARY_PATH` and
+   runs the program with its arguments.
+6. **The line** `export VAR=DIR/bin/NAME` on standard output, quoted; progress on standard error.
+
+`--dry-run` says what it would download, unpack and write, prints the line, and runs nothing. Each call
+of `apt-get` or `dpkg-deb` is given up after 15 minutes.
+
+For an SVG renderer for video-elements, in the virtual machine:
+
+```
+eval "$(python3 ~/mnt/lobster-tools/fetch-deb --into /tmp/work-$(id -u)/rsvg --program rsvg-convert --var RSVG_CONVERT librsvg2-bin librsvg2-2)"
+```
+
+On the Mac, which has no apt (15 November 2026, the Tier 3 check below):
+
+```
+$ fetch-deb --into "$S/work/rsvg" --program rsvg-convert --var RSVG_CONVERT librsvg2-bin librsvg2-2
+fetch-deb: no apt-get on PATH; fetch-deb runs where apt is (Debian, Ubuntu), such as the Linux virtual machine
+[exit 3]
+```
+
+| Code | Meaning |
+|------|---------|
+| 0 | Done, or reused: the line is on standard output (with `--dry-run`, after the `Would …` lines) |
+| 2 | Refused before anything ran: a name that is not a program, variable or package name; `--into`, `--program` or `--var` missing |
+| 3 | Something failed: no `apt-get` or `dpkg-deb` on `PATH`; the download or an unpacking failed or gave no answer in 15 minutes; fewer files than packages; the program not in the packages; the folder or the wrapper cannot be made or written |
+
 ## Errors and exit codes
 
 Every failure is one line on standard error, `lobster-mail <verb>: <what happened> (<what to do>)`,
@@ -980,7 +1036,7 @@ was changed after it was sent, so ask the sender.
 ```bash
 cd lobster-tools
 python3 -m venv .venv && .venv/bin/pip install -r requirements-dev.txt
-.venv/bin/pytest                # 448 tests, 98% coverage, about 45 seconds (15 November 2026)
+.venv/bin/pytest                # 503 tests, 98% coverage, about 50 seconds (15 November 2026)
 .venv/bin/ruff check .          # lint
 ```
 
@@ -990,11 +1046,14 @@ parsing and report) and `tests/tier2/` run the commands in-process against a scr
 clock fixed by `LOBSTER_MAIL_NOW` (an ISO 8601 time; for tests only); session-check's tests put a
 stub `git` on `PATH` that answers from a spec and records every call; prepare-venv's tests link the
 stand-in `tests/stubs/python3` (a `/bin/sh` script, never written by a test) onto `PATH`, where it
-fakes `-m venv`, the import check and `-m pip install` and records every call. Tests pin the
+fakes `-m venv`, the import check and `-m pip install` and records every call; fetch-deb's link
+`tests/stubs/apt-get` and `tests/stubs/dpkg-deb` the same way. Tests pin the
 architectural line: the source names no delete, and no way of running a program but `subprocess`
 inside `run_git` in `check.py`, which takes only reading git verbs (`stash` only as `stash list`),
 and inside `run_program` in `prepare.py`, which takes only `python3 -m venv
---system-site-packages DIR`, `python -m pip install -r FILE` and an import line of module names;
+--system-site-packages DIR`, `python -m pip install -r FILE` and an import line of module names,
+and inside `run_program` in `fetchdeb.py`, which takes only `apt-get download PACKAGE...` and
+`dpkg-deb -x FILE DIR`;
 every verb leaves the same set
 of message files (bytes and names) or adds exactly the two it says; session-check leaves the
 project and the mail root byte for byte the same and gives git only reading verbs; a hostile body
@@ -1035,7 +1094,11 @@ and `pip`, on an invented project whose folders have a space and a quote, pip ke
 with a wheel made by hand: the output in "`prepare-venv`" above; `eval` of the lines and an import
 through the venv worked; a config naming another model was rewritten, its other lines kept and no
 other file left beside it; nothing was written into the checkout. Not yet run in the Linux virtual
-machine.
+machine. And (15 November 2026) `--set` and `--tmpdir` the same way: the settings written, one changed
+on a second run and rewritten, nothing else left in the config's folder; `TMPDIR` made, exported and
+taken by the venv's Python as its temporary folder; a bad `--set` refused. `fetch-deb` on the Mac:
+`--help`, and a real run refused for want of apt (exit 3, nothing made). Its real check needs the
+Linux virtual machine: not yet done.
 
 ## Known limitations and non-goals
 
@@ -1139,6 +1202,9 @@ machine.
   virtual machine (venv, packages, the model setting in its config, the model check, the export
   lines), from a `prepare-venv.conf` in the project's checkout; see "`prepare-venv`". It does what
   each project's own `setup-linux` did, once for every project. Nothing else changes.
+- 15 November 2026: a fourth command, `fetch-deb`, fetches a program from Debian packages without
+  root, behind a wrapper, and prints the line naming it; see "`fetch-deb`". For the Linux virtual
+  machine; not yet run there.
 - 15 November 2026: `prepare-venv` takes `--set KEY=VALUE` (repeatable), writing further settings
   into `--conf` beside the model setting, and `--tmpdir DIR`, which makes that folder and adds
   `export TMPDIR=DIR` to the lines. Without them nothing changes.
