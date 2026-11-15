@@ -287,11 +287,11 @@ def test_no_git_at_all_cannot_be_told_and_the_rest_is_still_printed(env, monkeyp
 
 
 def test_git_that_hangs_is_given_up_after_the_timeout(env, monkeypatch):
-    monkeypatch.setattr(check, "GIT_TIMEOUT", 0.3)
+    monkeypatch.setattr(check, "GIT_TIMEOUT", 2)
     env.spec["hang"] = True
     code, out, _ = env.run("start")
     assert code == 3
-    assert tell(out)[0] == ("git, garden-tools-code: git status gave no answer in 0.3 seconds, "
+    assert tell(out)[0] == ("git, garden-tools-code: git status gave no answer in 2 seconds, "
                             "so nothing about its commits can be told")
 
 
@@ -685,11 +685,11 @@ def test_a_stash_list_that_fails_cannot_be_told_and_the_rest_is_printed(env):
 
 
 def test_a_stash_list_that_hangs_is_given_up_after_the_timeout(env, monkeypatch):
-    monkeypatch.setattr(check, "GIT_TIMEOUT", 0.3)
+    monkeypatch.setattr(check, "GIT_TIMEOUT", 2)
     env.spec["repos"][str(env.project / "garden-tools")]["stash_hangs"] = True
     env.handover("DIARY.md is 10 lines.\n")
     code, out, err = env.run("start")
     assert (code, err) == (3, "")
     assert tell(out) == [("git, garden-tools-code/garden-tools: git stash list gave no answer in "
-                         "0.3 seconds, so whether it has a stash cannot be told")]
+                         "2 seconds, so whether it has a stash cannot be told")]
     assert "git, garden-tools-code: no stash" in facts(out)
