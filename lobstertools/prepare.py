@@ -88,11 +88,13 @@ def import_line(names):
     return "import " + ", ".join(names)
 
 
-def export_lines(prefix, python, conf):
+def export_lines(prefix, python, conf, tmpdir=None):
     """The lines for `eval`, each value quoted as a shell needs it."""
     lines = ["export %s_PYTHON=%s" % (prefix, shlex.quote(python))]
     if conf is not None:
         lines.append("export %s_CONF=%s" % (prefix, shlex.quote(conf)))
+    if tmpdir is not None:
+        lines.append("export TMPDIR=%s" % shlex.quote(tmpdir))
     return lines + ["export PYTHONDONTWRITEBYTECODE=1"]
 
 
@@ -108,13 +110,14 @@ def with_setting(text, key, value):
     KEY=value lines."""
     if text is None:
         return "%s=%s\n" % (key, value)
+    home = os.path.expanduser("~")
     try:
-        settings = config.parse_conf(text, os.path.expanduser("~"))
+        settings = config.parse_conf(text, home)
     except config.ConfigError as error:
         raise ValueError(str(error).replace(" of the config file", "")) from None
-    if settings.get(key) == value:
-        return None
     new = "%s=%s\n" % (key, value)
+    if settings.get(key) == config.parse_conf(new, home)[key]:
+        return None
     lines = text.splitlines(True)
     if any(is_setting_line(line, key) for line in lines):
         return "".join(new if is_setting_line(line, key) else line for line in lines)
@@ -200,8 +203,30 @@ def read_project(checkout):
         raise Failure("%s cannot be used: %s" % (path, error), EXIT_USAGE) from None
 
 
-def check_flags(project, path, model, conf):
+def parse_sets(raw):
+    """--set KEY=VALUE, each checked before anything runs; (key, value) in order, the last of two
+    for one key kept, in the place of the first."""
+    pairs = {}
+    for item in raw:
+        key, equals, value = item.partition("=")
+        if not equals or not NAME.match(key) or not key.isascii():
+            raise Failure("--set needs KEY=VALUE, the key letters, figures and _, starting with a "
+                          "letter or _: %r" % item, EXIT_USAGE)
+        if "\n" in value or "\r" in value:
+            raise Failure("--set %s holds a line break, which one line of a config file cannot "
+                          "hold" % key, EXIT_USAGE)
+        pairs[key] = value
+    return list(pairs.items())
+
+
+def check_flags(project, path, model, conf, sets=()):
     """The flags the project's file calls for, and none it does not."""
+    if sets and conf is None:
+        raise Failure("--set needs --conf, the config file to write it into", EXIT_USAGE)
+    for key, _ in sets:
+        if key == project.model_setting:
+            raise Failure("--set %s is the model setting, which is written from --model" % key,
+                          EXIT_USAGE)
     if project.model_setting and (model is None or conf is None):
         raise Failure("%s names a model setting (MODEL_SETTING); give the model folder with "
                       "--model and the config file with --conf" % path, EXIT_USAGE)
@@ -211,7 +236,7 @@ def check_flags(project, path, model, conf):
     if model is not None and not (project.model_files or project.model_setting):
         raise Failure("--model is given, but %s names no model (MODEL_FILES or MODEL_SETTING)"
                       % path, EXIT_USAGE)
-    if conf is not None and not project.model_setting:
+    if conf is not None and not project.model_setting and not sets:
         raise Failure("--conf is given, but %s names no setting to write in it (MODEL_SETTING)"
                       % path, EXIT_USAGE)
 
@@ -274,24 +299,46 @@ def write_replacing(path, text):
         raise Failure("cannot write %s: %s%s" % (path, error.strerror or error, left)) from None
 
 
-def ensure_conf(conf, key, model, dry):
-    """KEY=model in the config, every other line kept; a file that says it already is left alone."""
+def ensure_conf(conf, pairs, dry):
+    """Each KEY=value of `pairs` in the config, every other line kept, in one write; a file that
+    says them all already is left alone."""
     try:
         text = None
         if os.path.lexists(conf):
             with open(conf, encoding="utf-8") as handle:
                 text = handle.read()
-        new = with_setting(text, key, model)
+        changed = []
+        for key, value in pairs:
+            new = with_setting(text, key, value)
+            if new is not None:
+                text = new
+                changed.append("%s=%s" % (key, value))
     except (OSError, ValueError) as error:
         raise Failure("%s cannot be used as it is; fix it or name another file with --conf:\n  %s"
                       % (conf, error)) from None
-    if new is None:
+    if not changed:
         return
     if dry:
-        print("Would write %s with %s=%s" % (conf, key, model))
+        print("Would write %s with %s" % (conf, ", ".join(changed)))
         return
-    write_replacing(conf, new)
+    write_replacing(conf, text)
     progress("wrote %s" % conf)
+
+
+def ensure_tmpdir(tmpdir, dry):
+    """The folder for TMPDIR, made when missing; one that cannot be written is refused."""
+    if os.path.isdir(tmpdir):
+        if not os.access(tmpdir, os.W_OK | os.X_OK):
+            raise Failure("%s, given for TMPDIR, cannot be written" % tmpdir)
+        return
+    if dry:
+        print("Would make %s for TMPDIR" % tmpdir)
+        return
+    try:
+        os.makedirs(tmpdir)
+    except OSError as error:
+        raise Failure("cannot make %s for TMPDIR: %s" % (tmpdir, error.strerror or error)) from None
+    progress("made %s for TMPDIR" % tmpdir)
 
 
 def parse(argv):
@@ -313,6 +360,12 @@ def parse(argv):
     parser.add_argument("--conf", metavar="FILE",
                         help="the config to write the model setting into, when prepare-venv.conf "
                              "names one")
+    parser.add_argument("--set", action="append", default=[], dest="sets", metavar="KEY=VALUE",
+                        help="a further setting to write into --conf; repeatable, the last for one "
+                             "key wins")
+    parser.add_argument("--tmpdir", metavar="DIR",
+                        help="a folder outside the checkout to make, if missing, and export as "
+                             "TMPDIR")
     parser.add_argument("--dry-run", action="store_true",
                         help="say what would be done; make, install and write nothing (only the "
                              "import check runs)")
@@ -323,30 +376,38 @@ def prepare(args):
     checkout, venv = os.path.abspath(args.project), os.path.abspath(args.venv)
     model = os.path.abspath(args.model) if args.model is not None else None
     conf = os.path.abspath(args.conf) if args.conf is not None else None
+    tmpdir = os.path.abspath(args.tmpdir) if args.tmpdir is not None else None
     if model is not None and ("\n" in model or "\r" in model):
         raise Failure("--model holds a line break, which one line of a config file cannot hold",
                       EXIT_USAGE)
+    sets = parse_sets(args.sets)
     if is_inside(venv, checkout):
         raise Failure("--venv %s is inside the checkout %s; make the venv outside it (in a "
                       "connected checkout it would shadow the project's own .venv)"
                       % (args.venv, checkout), EXIT_USAGE)
+    if tmpdir is not None and is_inside(tmpdir, checkout):
+        raise Failure("--tmpdir %s is inside the checkout %s; make it outside it"
+                      % (args.tmpdir, checkout), EXIT_USAGE)
     project, path = read_project(checkout)
-    check_flags(project, path, model, conf)
+    check_flags(project, path, model, conf, sets)
     requirements = os.path.join(checkout, project.requirements)
     if not os.path.isfile(requirements):
         raise Failure("the requirements file %s, named by REQUIREMENTS in %s, does not exist"
                       % (requirements, PROJECT_FILE), EXIT_USAGE)
     python, fresh = ensure_venv(venv, args.dry_run)
     ensure_packages(python, venv, requirements, project.imports, args.dry_run, fresh)
-    if project.model_setting:
-        ensure_conf(conf, project.model_setting, model, args.dry_run)
+    pairs = ([(project.model_setting, model)] if project.model_setting else []) + sets
+    if pairs:
+        ensure_conf(conf, pairs, args.dry_run)
+    if tmpdir is not None:
+        ensure_tmpdir(tmpdir, args.dry_run)
     problems = (model_problems(model, project.model_files, project.model_help)
                 if model is not None else [])
     for problem in problems:
         progress(problem)
     # The venv and the config are good even when the model is missing, so the lines are printed
     # either way: the project's commands that need no model can run (Request 02, "Settled" 51).
-    for line in export_lines(project.prefix, python, conf):
+    for line in export_lines(project.prefix, python, conf, tmpdir):
         print(line)
     return EXIT_FAILED if problems else EXIT_OK
 

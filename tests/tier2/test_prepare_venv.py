@@ -569,3 +569,164 @@ def test_as_a_program_eval_in_sh_sets_the_variables_when_only_the_model_is_missi
     assert lines(done.stdout) == ["exit=0", scene.python, str(scene.conf)]
     assert "does not exist" in done.stderr
 
+
+
+# --set KEY=VALUE and --tmpdir DIR (Request 24 from training-video, (b) and (c); "Settled" 53).
+
+def test_set_writes_each_setting_beside_the_model_setting(scene):
+    scene.model_in_place()
+    code, out, err = run(*scene.flags(), "--set", "VIDEO_ELEMENTS_DIR=/mnt/video-elements",
+                         "--set", "TIME_ZONE=UTC")
+    assert (code, lines(out)) == (0, scene.exports())
+    assert scene.conf.read_text(encoding="utf-8") == (
+        "SPEECH_MODEL_DIR=%s\nVIDEO_ELEMENTS_DIR=/mnt/video-elements\nTIME_ZONE=UTC\n" % scene.model)
+    assert lines(err).count("prepare-venv: wrote %s" % scene.conf) == 1
+
+
+def test_set_twice_for_one_key_keeps_the_last(scene):
+    scene.model_in_place()
+    assert run(*scene.flags(), "--set", "A=first", "--set", "A=last")[0] == 0
+    assert scene.conf.read_text(encoding="utf-8") == "SPEECH_MODEL_DIR=%s\nA=last\n" % scene.model
+
+
+def test_set_replaces_a_different_value_and_keeps_every_other_line(scene):
+    scene.model_in_place()
+    scene.conf.parent.mkdir(parents=True)
+    scene.conf.write_text("# mine\nA=old\nB=2\n", encoding="utf-8")
+    assert run(*scene.flags(), "--set", "A=new")[0] == 0
+    assert scene.conf.read_text(encoding="utf-8") == (
+        "# mine\nA=new\nB=2\nSPEECH_MODEL_DIR=%s\n" % scene.model)
+
+
+def test_a_second_run_with_the_same_settings_writes_nothing(scene):
+    scene.model_in_place()
+    flags = scene.flags() + ["--set", "A=1", "--set", 'NAME="two words"']
+    assert run(*flags)[0] == 0
+    before = scene.conf.stat().st_mtime_ns
+    code, _, err = run(*flags)
+    assert (code, err) == (0, "")
+    assert scene.conf.stat().st_mtime_ns == before
+
+
+def test_a_hostile_value_is_written_byte_for_byte(scene):
+    scene.model_in_place()
+    value = "it's $HOME `x` \\ café</script> # not a comment"
+    assert run(*scene.flags(), "--set", "ODD=" + value)[0] == 0
+    assert lines(scene.conf.read_text(encoding="utf-8"))[1] == "ODD=" + value
+
+
+@pytest.mark.parametrize("bad", ["NOEQUALS", "=value", "1A=x", "A-B=x", "A B=x", "café=x"])
+def test_a_malformed_set_is_refused_before_anything_runs(scene, bad):
+    code, out, err = run(*scene.flags(), "--set", "GOOD=1", "--set", bad)
+    assert (code, out) == (2, "")
+    assert err == ("prepare-venv: --set needs KEY=VALUE, the key letters, figures and _, starting "
+                   "with a letter or _: %r\n" % bad)
+    assert scene.calls() == [] and not scene.conf.exists()
+
+
+def test_a_set_value_with_a_line_break_is_refused(scene):
+    code, _, err = run(*scene.flags(), "--set", "A=one\ntwo")
+    assert code == 2
+    assert err == ("prepare-venv: --set A holds a line break, which one line of a config file "
+                   "cannot hold\n")
+    assert scene.calls() == []
+
+
+def test_set_of_the_model_setting_is_refused(scene):
+    code, _, err = run(*scene.flags(), "--set", "SPEECH_MODEL_DIR=/elsewhere")
+    assert code == 2
+    assert err == ("prepare-venv: --set SPEECH_MODEL_DIR is the model setting, which is written "
+                   "from --model\n")
+
+
+def test_set_without_a_config_is_refused(scene):
+    (scene.project / "prepare-venv.conf").write_text(PACKAGES_ONLY, encoding="utf-8")
+    (scene.project / "requirements.txt").write_text("numpy\n", encoding="utf-8")
+    code, _, err = run(*scene.flags(model=False, conf=False), "--set", "A=1")
+    assert code == 2
+    assert err == "prepare-venv: --set needs --conf, the config file to write it into\n"
+
+
+def test_a_project_with_no_model_can_have_a_config_for_its_settings(scene):
+    (scene.project / "prepare-venv.conf").write_text(PACKAGES_ONLY, encoding="utf-8")
+    (scene.project / "requirements.txt").write_text("numpy\n", encoding="utf-8")
+    code, out, _ = run(*scene.flags(model=False), "--set", "VIDEO_ELEMENTS_DIR=/v")
+    assert (code, lines(out)) == (0, scene.exports(prefix="PLAIN"))
+    assert scene.conf.read_text(encoding="utf-8") == "VIDEO_ELEMENTS_DIR=/v\n"
+
+
+def test_a_dry_run_names_every_setting_it_would_write(scene):
+    scene.model_in_place()
+    code, out, _ = run(*scene.flags(), "--set", "A=1", "--set", "B=2", "--dry-run")
+    assert code == 0
+    assert ("Would write %s with SPEECH_MODEL_DIR=%s, A=1, B=2" % (scene.conf, scene.model)
+            in lines(out))
+    assert not scene.conf.exists()
+
+
+def test_tmpdir_is_made_writable_and_exported(scene):
+    scene.model_in_place()
+    tmp = scene.tmp / "work" / "tmp"
+    code, out, err = run(*scene.flags(), "--tmpdir", tmp)
+    assert code == 0
+    assert lines(out) == prepare.export_lines("DEMO_TOOLS", scene.python, str(scene.conf),
+                                              str(tmp))
+    assert tmp.is_dir() and os.access(str(tmp), os.W_OK)
+    assert "prepare-venv: made %s for TMPDIR" % tmp in lines(err)
+
+
+def test_an_existing_tmpdir_is_used_and_nothing_is_said(scene):
+    scene.model_in_place()
+    assert run(*scene.flags())[0] == 0
+    tmp = scene.tmp / "tmp"
+    tmp.mkdir()
+    code, out, err = run(*scene.flags(), "--tmpdir", tmp)
+    assert (code, err) == (0, "")
+    assert "export TMPDIR=%s" % tmp in lines(out)
+
+
+def test_tmpdir_inside_the_checkout_is_refused_before_anything_runs(scene):
+    code, out, err = run(*scene.flags(), "--tmpdir", scene.project / "tmp")
+    assert (code, out) == (2, "")
+    assert err == ("prepare-venv: --tmpdir %s is inside the checkout %s; make it outside it\n"
+                   % (scene.project / "tmp", scene.project))
+    assert scene.calls() == []
+
+
+def test_tmpdir_that_is_a_file_is_reported_with_no_lines(scene):
+    scene.model_in_place()
+    (scene.tmp / "tmp").write_text("x", encoding="utf-8")
+    code, out, err = run(*scene.flags(), "--tmpdir", scene.tmp / "tmp")
+    assert (code, out) == (3, "")
+    assert lines(err)[-1].startswith("prepare-venv: cannot make %s for TMPDIR: "
+                                     % (scene.tmp / "tmp"))
+
+
+def test_tmpdir_that_cannot_be_written_is_reported_with_no_lines(scene):
+    scene.model_in_place()
+    tmp = scene.tmp / "tmp"
+    tmp.mkdir()
+    tmp.chmod(0o555)
+    try:
+        code, out, err = run(*scene.flags(), "--tmpdir", tmp)
+        assert (code, out) == (3, "")
+        assert lines(err)[-1] == "prepare-venv: %s, given for TMPDIR, cannot be written" % tmp
+    finally:
+        tmp.chmod(0o755)
+
+
+def test_a_dry_run_says_it_would_make_the_tmpdir_and_makes_nothing(scene):
+    scene.model_in_place()
+    tmp = scene.tmp / "tmp"
+    code, out, _ = run(*scene.flags(), "--tmpdir", tmp, "--dry-run")
+    assert code == 0
+    assert "Would make %s for TMPDIR" % tmp in lines(out)
+    assert "export TMPDIR=%s" % tmp in lines(out)
+    assert not tmp.exists()
+
+
+def test_with_only_the_model_missing_the_lines_include_tmpdir(scene):
+    tmp = scene.tmp / "tmp"
+    code, out, _ = run(*scene.flags(), "--tmpdir", tmp)
+    assert code == 3
+    assert "export TMPDIR=%s" % tmp in lines(out)

@@ -831,7 +831,8 @@ mail root is found at `~/mnt/mail`. Use `end` in place of `start` before the han
 ### `prepare-venv`: a project's venv for the Linux device shell
 
 ```
-prepare-venv --project DIR --venv DIR [--model DIR] [--conf FILE] [--dry-run]
+prepare-venv --project DIR --venv DIR [--model DIR] [--conf FILE] [--set KEY=VALUE]...
+             [--tmpdir DIR] [--dry-run]
 prepare-venv --help
 ```
 
@@ -848,15 +849,23 @@ commands then run under, so it cannot use that venv. In order:
 4. **The packages.** The venv's python runs `import a, b, …` for the names in `IMPORTS`; only when
    that fails, `python -m pip install -r REQUIREMENTS`, and the import check again. So a second run
    runs only the import check and says nothing.
-5. **The config**, when the project names a `MODEL_SETTING`: `SETTING=<model folder>` is written into
+5. **The config**, when the project names a `MODEL_SETTING` or `--set` is given: `SETTING=<model folder>` is written into
    `--conf` when the file is missing, has no such line, or names another folder; every other line is
    kept as it is, the file's mode kept, and the new copy is written beside it and renamed into place.
    A file that already says it is left alone. A file that is not `KEY=value` lines, is not text, or
-   cannot be read is refused, exit 3, and left byte for byte.
-6. **The model check**, when the project names a model: a missing folder is one message; otherwise
+   cannot be read is refused, exit 3, and left byte for byte. Each `--set KEY=VALUE` (repeatable;
+   the last for one key wins) is written into the same file in the same way and the same write,
+   for any setting a project keeps there (`--set VIDEO_ELEMENTS_DIR=$HOME/mnt/video-elements`). A
+   `--set` is checked before anything runs: the key letters, figures and `_`, the value one line, not
+   the model's own setting, and `--conf` given (exit 2 otherwise). With `--set`, `--conf` may be given
+   to a project that names no model.
+6. **`--tmpdir DIR`**, when given: the folder is made if missing (refused inside the checkout, exit 2;
+   one that cannot be made or written, exit 3), and `export TMPDIR=DIR` joins the lines, so packages
+   that write to the temporary folder use it rather than a shared disk.
+7. **The model check**, when the project names a model: a missing folder is one message; otherwise
    each missing file in `MODEL_FILES` is named. Exit 3, after the venv and the config are done, so
    one run reports all it can.
-7. **The export lines** on standard output and nothing else, so `eval "$(prepare-venv …)"` takes
+8. **The export lines** on standard output and nothing else, so `eval "$(prepare-venv …)"` takes
    them; a path a shell would split is quoted. Progress goes to standard error. They are printed on
    success, and also when the model check is the only thing that failed (still exit 3), since the
    venv and the config are good: the project's commands that need no model can run, and the one
@@ -919,8 +928,8 @@ checkout; then the project's commands find their python in `<PREFIX>_PYTHON`.
 | Code | Meaning |
 |------|---------|
 | 0 | Done: the export lines are on standard output (with `--dry-run`, after the `Would …` lines) |
-| 2 | Refused before anything ran: the venv inside the checkout; no `prepare-venv.conf`, or one that cannot be read or used; the requirements file missing; `--model` or `--conf` missing where the file calls for them, or given where it does not; `--model` holding a line break; `--project` or `--venv` missing |
-| 3 | Something failed while doing it: no `python3` on `PATH`; `venv` or `pip` exited non-zero (its last five lines are shown; the venv is kept, so the next run installs again); the packages installed but the import still fails; the config cannot be read, used or written; the model folder or a model file missing (this one alone still prints the export lines, the venv and config being good) |
+| 2 | Refused before anything ran: the venv inside the checkout; no `prepare-venv.conf`, or one that cannot be read or used; the requirements file missing; `--model` or `--conf` missing where the file calls for them, or given where it does not; `--model` holding a line break; a malformed `--set`, one with a line break, one for the model setting, or `--set` without `--conf`; `--tmpdir` inside the checkout; `--project` or `--venv` missing |
+| 3 | Something failed while doing it: no `python3` on `PATH`; `venv` or `pip` exited non-zero (its last five lines are shown; the venv is kept, so the next run installs again); the packages installed but the import still fails; the config cannot be read, used or written; `--tmpdir` cannot be made or written; the model folder or a model file missing (this one alone still prints the export lines, the venv and config being good) |
 
 ## Errors and exit codes
 
@@ -971,7 +980,7 @@ was changed after it was sent, so ask the sender.
 ```bash
 cd lobster-tools
 python3 -m venv .venv && .venv/bin/pip install -r requirements-dev.txt
-.venv/bin/pytest                # 423 tests, 98% coverage, about 45 seconds (15 November 2026)
+.venv/bin/pytest                # 448 tests, 98% coverage, about 45 seconds (15 November 2026)
 .venv/bin/ruff check .          # lint
 ```
 
@@ -1130,6 +1139,9 @@ machine.
   virtual machine (venv, packages, the model setting in its config, the model check, the export
   lines), from a `prepare-venv.conf` in the project's checkout; see "`prepare-venv`". It does what
   each project's own `setup-linux` did, once for every project. Nothing else changes.
+- 15 November 2026: `prepare-venv` takes `--set KEY=VALUE` (repeatable), writing further settings
+  into `--conf` beside the model setting, and `--tmpdir DIR`, which makes that folder and adds
+  `export TMPDIR=DIR` to the lines. Without them nothing changes.
 - 15 November 2026: when the model check is the only failure (the model folder or one of its files
   missing), `prepare-venv` now prints the export lines as well, and still exits 3, so `eval` sets
   the variables and the commands that need no model can run. After any other failure it prints no

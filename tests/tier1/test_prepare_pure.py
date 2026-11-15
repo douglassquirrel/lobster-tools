@@ -112,3 +112,14 @@ def test_inside_the_checkout_through_a_symbolic_link(tmp_path):
     os.symlink(str(checkout), str(tmp_path / "link"))
     assert is_inside(str(tmp_path / "link" / "venv"), str(checkout))
     assert is_inside(str(checkout / "venv"), str(tmp_path / "link"))
+
+
+def test_export_lines_with_a_temporary_folder():
+    assert export_lines("P", "/v/bin/python", "/c/p.conf", "/w/tmp dir") == [
+        "export P_PYTHON=/v/bin/python", "export P_CONF=/c/p.conf",
+        "export TMPDIR='/w/tmp dir'", "export PYTHONDONTWRITEBYTECODE=1"]
+
+
+def test_a_value_the_config_already_holds_in_another_form_needs_no_change():
+    assert with_setting("VOICE=af_heart\n", "VOICE", '"af_heart"') is None
+    assert with_setting("NAME='two words'\n", "NAME", "two words") is None
