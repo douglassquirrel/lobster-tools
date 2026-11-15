@@ -726,7 +726,11 @@ person you work for, then the rest.
   or makes a stash.
 - **Folders**: with `--session device`, `~/mnt/<name>` for `SISTER`, each of `CLAWS` (separated by
   spaces), the last part of each path in `FOLDERS`, `~/mnt/mail` and `~/mnt/lobster-tools`; with
-  `--session mac`, the paths in `FOLDERS` themselves and the mail root. A missing one is named.
+  `--session mac`, the paths in `FOLDERS` themselves and the mail root. A missing one is named, each
+  folder on its own line. `FOLDERS` holds several folders separated by colons
+  (`FOLDERS=~/models/kokoro:~/models/silero-vad`), as bernstein-tools writes it: spaces round a part
+  are trimmed, an empty part is passed over, each part may start `~/`, and a line with no colon is one
+  path, a space included.
 - **Leftovers**: `__pycache__` folders (not in `.git/`, `.venv/` or `_to_delete/`), a problem only
   where git does not ignore them; `backlog/.locks/` not empty, looked at only where the project
   keeps tickets (it has `backlog/config.yml`). Removing either is the person's to allow.
@@ -1036,7 +1040,7 @@ was changed after it was sent, so ask the sender.
 ```bash
 cd lobster-tools
 python3 -m venv .venv && .venv/bin/pip install -r requirements-dev.txt
-.venv/bin/pytest                # 503 tests, 98% coverage, about 50 seconds (15 November 2026)
+.venv/bin/pytest                # 519 tests, 99% coverage, about 55 seconds (15 November 2026)
 .venv/bin/ruff check .          # lint
 ```
 
@@ -1198,6 +1202,9 @@ Linux virtual machine: not yet done.
   line each under what to tell (exit 1), newest first, with when it was made; at the end the line
   says to put it back before the handover or say why it is left. A repository with none gets the
   fact "no stash". It only reads (`git stash list`), and never touches a stash.
+- 15 November 2026: `session-check` reads several folders in `FOLDERS` separated by colons, as
+  bernstein-tools writes them, no longer by spaces; a line with no colon is one folder, a space
+  included. A line of two folders was being reported as one missing folder.
 - 15 November 2026: a third command, `prepare-venv`, prepares a project's venv for the Linux
   virtual machine (venv, packages, the model setting in its config, the model check, the export
   lines), from a `prepare-venv.conf` in the project's checkout; see "`prepare-venv`". It does what

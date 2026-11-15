@@ -30,9 +30,19 @@ def handover_diary_lines(headers, body):
     return int(match.group(1).replace(",", "")) if match else None
 
 
+def folder_list(value):
+    """FOLDERS as bernstein-tools writes it (Request 21, "Settled" 55): folders separated by colons,
+    each part trimmed and an empty one passed over; a line with no colon is one path, spaces and
+    all."""
+    value = (value or "").strip()
+    if ":" not in value:
+        return [value] if value else []
+    return [part.strip() for part in value.split(":") if part.strip()]
+
+
 def expected_folders(conf, session, home, mail_root):
     """(what, path) for each folder this session should be able to reach."""
-    folders = (conf.get("FOLDERS") or "").split()
+    folders = folder_list(conf.get("FOLDERS"))
     if session == "mac":
         found = [("FOLDERS %s" % path, path) for path in folders]
         return found + ([("the mail root", mail_root)] if mail_root else [])
@@ -291,7 +301,7 @@ class Check:
 
     def folders(self, conf, mail_root):
         conf = dict(conf)
-        conf["FOLDERS"] = " ".join(self.expand(p) for p in (conf.get("FOLDERS") or "").split())
+        conf["FOLDERS"] = ":".join(self.expand(p) for p in folder_list(conf.get("FOLDERS")))
         for what, path in expected_folders(conf, self.args.session, self.home, mail_root):
             if os.path.isdir(path):
                 self.add(fact("folder reachable: %s (%s)" % (what, path)))

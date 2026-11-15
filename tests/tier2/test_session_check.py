@@ -314,7 +314,7 @@ def test_in_the_device_shell_a_claw_absent_from_mnt_is_named(env):
 
 def test_on_the_mac_the_named_folders_are_looked_for_at_their_real_paths(env):
     (env.project / "lobster.conf").write_text(
-        "SELF=garden-tools\nCLAWS=word-tools\nFOLDERS='~/models/kokoro ~/big'\n",
+        "SELF=garden-tools\nCLAWS=word-tools\nFOLDERS=~/models/kokoro:~/big\n",
         encoding="utf-8")
     (env.home / "big").mkdir()
     code, out, _ = env.run("start")
@@ -322,6 +322,65 @@ def test_on_the_mac_the_named_folders_are_looked_for_at_their_real_paths(env):
     assert tell(out) == ["folder missing: FOLDERS %s, expected at %s"
                          % (env.home / "models" / "kokoro", env.home / "models" / "kokoro")]
     assert "folder reachable: FOLDERS %s (%s)" % (env.home / "big", env.home / "big") in facts(out)
+
+
+# FOLDERS separated by colons, as bernstein-tools writes it (Request 21, "Settled" 55).
+
+def test_two_folders_by_colon_both_there_are_two_facts_and_nothing_to_tell(env):
+    one, two = env.home / "one", env.home / "two"
+    one.mkdir()
+    two.mkdir()
+    (env.project / "lobster.conf").write_text("SELF=garden-tools\nFOLDERS=%s:%s\n" % (one, two),
+                                              encoding="utf-8")
+    code, out, _ = env.run("start")
+    assert (code, tell(out)) == (0, [])
+    assert "folder reachable: FOLDERS %s (%s)" % (one, one) in facts(out)
+    assert "folder reachable: FOLDERS %s (%s)" % (two, two) in facts(out)
+
+
+def test_of_two_folders_only_the_missing_one_is_named(env):
+    (env.home / "models" / "kokoro").mkdir(parents=True)
+    (env.project / "lobster.conf").write_text(
+        "SELF=garden-tools\nFOLDERS=~/models/kokoro:~/models/silero-vad\n", encoding="utf-8")
+    code, out, _ = env.run("start")
+    missing = env.home / "models" / "silero-vad"
+    assert code == 1
+    assert tell(out) == ["folder missing: FOLDERS %s, expected at %s" % (missing, missing)]
+
+
+def test_spaces_round_a_part_and_empty_parts_are_passed_over(env):
+    one, two = env.home / "one", env.home / "two"
+    one.mkdir()
+    two.mkdir()
+    (env.project / "lobster.conf").write_text(
+        "SELF=garden-tools\nFOLDERS= %s : :%s: \n" % (one, two), encoding="utf-8")
+    code, out, _ = env.run("start")
+    assert (code, tell(out)) == (0, [])
+    assert [line for line in facts(out) if line.startswith("folder reachable: FOLDERS")] == [
+        "folder reachable: FOLDERS %s (%s)" % (one, one),
+        "folder reachable: FOLDERS %s (%s)" % (two, two)]
+
+
+def test_a_line_without_a_colon_is_one_folder_with_its_space(env):
+    big = env.home / "Big Files"
+    big.mkdir()
+    (env.project / "lobster.conf").write_text("SELF=garden-tools\nFOLDERS=~/Big Files\n",
+                                              encoding="utf-8")
+    code, out, _ = env.run("start")
+    assert (code, tell(out)) == (0, [])
+    assert "folder reachable: FOLDERS %s (%s)" % (big, big) in facts(out)
+
+
+def test_in_the_device_shell_each_folder_by_colon_is_looked_for_under_mnt(env):
+    (env.project / "lobster.conf").write_text(
+        "SELF=garden-tools\nFOLDERS=~/models/one:/Users/sq/two\n", encoding="utf-8")
+    mnt = env.home / "mnt"
+    for name in ("one", "mail", "lobster-tools"):
+        (mnt / name).mkdir(parents=True)
+    code, out, _ = env.run("start", session="device")
+    assert code == 1
+    assert tell(out) == ["folder missing: FOLDERS two, expected at %s" % (mnt / "two")]
+    assert "folder reachable: FOLDERS one (%s)" % (mnt / "one") in facts(out)
 
 
 # Leftovers

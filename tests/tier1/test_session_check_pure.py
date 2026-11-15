@@ -1,5 +1,7 @@
 """session-check's pure parts: the handover's diary length, the folders a session should reach,
 git's porcelain status, sizes, and how findings become the report and its exit code."""
+import pytest
+
 from lobstertools import check
 
 # The diary length the last handover gave
@@ -59,6 +61,29 @@ def test_on_the_mac_only_the_named_folders_and_the_mail_root_are_expected():
         ("FOLDERS /Users/sq/models/kokoro", "/Users/sq/models/kokoro"),
         ("the mail root", "/Users/sq/projects/mail"),
     ]
+
+
+@pytest.mark.parametrize("value, parts", [
+    ("/a/one:/a/two", ["/a/one", "/a/two"]),
+    ("~/models/one:~/models/two", ["~/models/one", "~/models/two"]),
+    (" /a/one : /a/two ", ["/a/one", "/a/two"]),
+    ("/a/one::/a/two:", ["/a/one", "/a/two"]),
+    ("/a/my folder", ["/a/my folder"]),
+    ("  /a/my folder  ", ["/a/my folder"]),
+    ("/a/one", ["/a/one"]),
+    ("", []),
+    ("   ", []),
+    (":", []),
+])
+def test_folders_are_separated_by_colons_and_a_line_without_one_is_one_path(value, parts):
+    assert check.folder_list(value) == parts
+
+
+def test_two_folders_by_colon_on_the_device_are_two_names_under_mnt():
+    found = check.expected_folders({"FOLDERS": "/Users/sq/one:/Users/sq/Big Files"}, "device",
+                                   "/home/u", None)
+    assert found[:2] == [("FOLDERS one", "/home/u/mnt/one"),
+                         ("FOLDERS Big Files", "/home/u/mnt/Big Files")]
 
 
 def test_empty_settings_expect_only_the_mail_and_lobster_tools():
