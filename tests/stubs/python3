@@ -1,0 +1,32 @@
+#!/bin/sh
+# Stand-in for python3, and for a venv's bin/python, in prepare-venv's tests (tests/tier2/
+# test_prepare_venv.py). Linked onto a test's PATH as python3; never written by a test.
+# The test's folder is $PYSTUB_DIR: each call is appended to its `calls` (the program's path,
+# then each argument, each ended by a NUL, the call ended by "--end--" and a NUL), and these
+# files there change what it does:
+#   venv-fails    `-m venv DIR` prints the file to stderr and exits 1
+#   importable    `-c CODE` exits 0 (else it says no module and exits 1)
+#   pip-fails     `-m pip ...` prints the file to stderr and exits 1
+#   pip-useless   `-m pip install` succeeds without making the imports work
+# `-m venv DIR` makes DIR/bin and links $PYSTUB_FILE (this file) in as DIR/bin/python.
+d=$PYSTUB_DIR
+printf '%s\0' "$0" "$@" "--end--" >> "$d/calls"
+if [ "$1" = "-m" ] && [ "$2" = "venv" ]; then
+    if [ -f "$d/venv-fails" ]; then cat "$d/venv-fails" >&2; exit 1; fi
+    for last in "$@"; do :; done
+    mkdir -p "$last/bin" && ln -s "$PYSTUB_FILE" "$last/bin/python"
+    exit $?
+fi
+if [ "$1" = "-c" ]; then
+    if [ -f "$d/importable" ]; then exit 0; fi
+    echo "ModuleNotFoundError: No module named 'stand_in'" >&2
+    exit 1
+fi
+if [ "$1" = "-m" ] && [ "$2" = "pip" ]; then
+    if [ -f "$d/pip-fails" ]; then cat "$d/pip-fails" >&2; exit 1; fi
+    echo "Successfully installed stand-in-1.0"
+    if [ ! -f "$d/pip-useless" ]; then : > "$d/importable"; fi
+    exit 0
+fi
+echo "stand-in python3: not expected: $*" >&2
+exit 2

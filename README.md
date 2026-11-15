@@ -18,6 +18,14 @@ folders the session cannot reach, leftover `__pycache__` and lock folders, what 
 `_to_delete/`, the diary's length against what the last handover said, and what waits in `inbox/`
 and `dreams/`. It reads only: it runs `git` with reading commands alone and writes nothing.
 
+The third is **`prepare-venv`**, for a tools project that is allowed third-party packages and is run
+from the Linux virtual machine on the Mac, where its Mac `.venv` cannot be used and no venv may sit
+in the connected checkout. In one command it makes or reuses a venv outside the checkout, installs
+the project's packages when they do not import, writes the model folder into the project's config,
+checks the model's files and prints the `export` lines for `eval`. Each project's own details are in
+a small file in its checkout, `prepare-venv.conf`. It runs only `python3 -m venv`, `pip install -r`
+and an import check, and writes only that one config file.
+
 ## Requirements
 
 - macOS with the command-line developer tools, which give `/usr/bin/python3` (Python 3.9 or
@@ -34,6 +42,7 @@ git clone https://github.com/douglassquirrel/lobster-tools.git
 cd lobster-tools
 ./lobster-mail --help
 ./session-check --help
+./prepare-venv --help
 ```
 
 The command is run as `./lobster-mail` from the checkout, as every example below does; nothing
@@ -819,6 +828,94 @@ mail root is found at `~/mnt/mail`. Use `end` in place of `start` before the han
 | 2 | A wrong argument: no `start` or `end`, no `--session` (or `LOBSTER_MAIL_SESSION`), a project folder that does not exist |
 | 3 | Something cannot be told, every other fact still printed: no `lobster.conf` or one that cannot be read, the project folder not a git repository, `git` not found or not answering within a minute, git status or git stash list failing, no mail root or no such mailbox |
 
+### `prepare-venv`: a project's venv for the Linux device shell
+
+```
+prepare-venv --project DIR --venv DIR [--model DIR] [--conf FILE] [--dry-run]
+prepare-venv --help
+```
+
+Runs on whatever `python3` runs it, standard library only: it makes the venv the project's own
+commands then run under, so it cannot use that venv. In order:
+
+1. **The checkout rule first.** A `--venv` that is the checkout or anything inside it (symbolic
+   links followed) is refused, exit 2, before anything runs: in a connected checkout it would
+   shadow the project's own `.venv` on the Mac.
+2. **The project's file**, `prepare-venv.conf` in the checkout, and the flags it calls for (below).
+   Anything wrong in it is refused in words, exit 2.
+3. **The venv.** When `DIR/bin/python` is missing, `python3 -m venv --system-site-packages DIR`
+   (the `python3` on `PATH`); an existing venv is reused.
+4. **The packages.** The venv's python runs `import a, b, …` for the names in `IMPORTS`; only when
+   that fails, `python -m pip install -r REQUIREMENTS`, and the import check again. So a second run
+   runs only the import check and says nothing.
+5. **The config**, when the project names a `MODEL_SETTING`: `SETTING=<model folder>` is written into
+   `--conf` when the file is missing, has no such line, or names another folder; every other line is
+   kept as it is, the file's mode kept, and the new copy is written beside it and renamed into place.
+   A file that already says it is left alone. A file that is not `KEY=value` lines, is not text, or
+   cannot be read is refused, exit 3, and left byte for byte.
+6. **The model check**, when the project names a model: a missing folder is one message; otherwise
+   each missing file in `MODEL_FILES` is named. Exit 3, after the venv and the config are done, so
+   one run reports all it can.
+7. **The export lines** on standard output and nothing else, so `eval "$(prepare-venv …)"` takes
+   them; a path a shell would split is quoted. Progress goes to standard error.
+
+`--dry-run` prints a `Would …` line on standard output for each step that would do something, then
+the export lines, and runs nothing but the import check (and not that when there is no venv yet).
+Do not `eval` a dry run's output.
+
+**The project's file**, `prepare-venv.conf`, `KEY=value` lines, `#` comments, optional quotes:
+
+| Key | | What it is |
+|-----|--|------------|
+| `ENV_PREFIX` | required | Capital letters, figures and `_`: the lines export `<PREFIX>_PYTHON` (the venv's python) and, with a config, `<PREFIX>_CONF`, and always `PYTHONDONTWRITEBYTECODE=1` |
+| `REQUIREMENTS` | required | The project's requirements file, relative to the checkout and inside it, handed to `pip install -r` |
+| `IMPORTS` | required | Module names, separated by spaces (`cairo numpy PIL.Image`). Each must be a dotted Python name: the tool builds the import line itself, so nothing from the file runs as code |
+| `MODEL_FILES` | optional | Plain file names the model folder must hold (`model.onnx voices.npz`); calls for `--model` |
+| `MODEL_SETTING` | optional | The config key that names the model folder (`SPEECH_MODEL_DIR`); calls for `--model` and `--conf` |
+| `MODEL_HELP` | optional | Where the project says how to get the model, used in its messages (default: `the project's README`) |
+
+A key it does not know is refused, so a misspelling is caught. A project with packages but no model
+needs only the three required keys, and is run without `--model` or `--conf`; `--model` or `--conf`
+given to a project that names no model or setting is refused.
+
+An example, for an invented project in a scratch folder `$S` (from the Tier 3 check below; pip kept
+off the network with `PIP_NO_INDEX=1`, the one package a wheel made by hand):
+
+```
+$ cat "$S/demo tools/prepare-venv.conf"
+ENV_PREFIX=DEMO_TOOLS
+REQUIREMENTS=requirements-linux.txt
+IMPORTS=json lobster_demo_pkg
+MODEL_FILES=model.onnx voices.npz
+MODEL_SETTING=SPEECH_MODEL_DIR
+MODEL_HELP=the README's "Speech model"
+$ prepare-venv --project "$S/demo tools" --venv "$S/venvs/demo's venv" --model "$S/models/kokoro" --conf "$S/conf/demo-tools.conf"
+prepare-venv: made the venv at $S/venvs/demo's venv
+prepare-venv: installed the packages in $S/demo tools/requirements-linux.txt into $S/venvs/demo's venv
+prepare-venv: wrote $S/conf/demo-tools.conf
+prepare-venv: the model folder $S/models/kokoro does not exist; get the model as the README's "Speech model" says
+[exit 3]
+$ (the model put in place, and the same command again)
+export DEMO_TOOLS_PYTHON='$S/venvs/demo'"'"'s venv/bin/python'
+export DEMO_TOOLS_CONF=$S/conf/demo-tools.conf
+export PYTHONDONTWRITEBYTECODE=1
+[exit 0]
+$ prepare-venv --project "$S/demo tools" --venv "$S/demo tools/.venv-linux" --model "$S/models/kokoro" --conf "$S/conf/demo-tools.conf"
+prepare-venv: --venv $S/demo tools/.venv-linux is inside the checkout $S/demo tools; make the venv outside it (in a connected checkout it would shadow the project's own .venv)
+[exit 2]
+```
+
+**How a session runs it.** In the Linux virtual machine, a project's own wrapper or set-up step runs
+`eval "$(python3 ~/mnt/lobster-tools/prepare-venv --project ~/mnt/<project> --venv ~/venvs/<project>
+--model ~/models/<model> --conf ~/<project>.conf)"`, with whatever folders it uses outside the
+checkout; then the project's commands find their python in `<PREFIX>_PYTHON`.
+
+| Code | Meaning |
+|------|---------|
+| 0 | Done: the export lines are on standard output (with `--dry-run`, after the `Would …` lines) |
+| 2 | Refused before anything ran: the venv inside the checkout; no `prepare-venv.conf`, or one that cannot be read or used; the requirements file missing; `--model` or `--conf` missing where the file calls for them, or given where it does not; `--model` holding a line break; `--project` or `--venv` missing |
+| 3 | Something failed while doing it: no `python3` on `PATH`; `venv` or `pip` exited non-zero (its last five lines are shown; the venv is kept, so the next run installs again); the packages installed but the import still fails; the config cannot be read, used or written; the model folder or a model file missing |
+
 ## Errors and exit codes
 
 Every failure is one line on standard error, `lobster-mail <verb>: <what happened> (<what to do>)`,
@@ -868,7 +965,7 @@ was changed after it was sent, so ask the sender.
 ```bash
 cd lobster-tools
 python3 -m venv .venv && .venv/bin/pip install -r requirements-dev.txt
-.venv/bin/pytest                # 318 tests, 98% coverage, about 25 seconds (14 November 2026)
+.venv/bin/pytest                # 419 tests, 98% coverage, about 40 seconds (15 November 2026)
 .venv/bin/ruff check .          # lint
 ```
 
@@ -876,9 +973,14 @@ No test touches the network, a real mailbox or the clock: `tests/tier1/` are pur
 (message format, ids, the config reader, the watch loop with an injected clock, session-check's
 parsing and report) and `tests/tier2/` run the commands in-process against a scratch root with the
 clock fixed by `LOBSTER_MAIL_NOW` (an ISO 8601 time; for tests only); session-check's tests put a
-stub `git` on `PATH` that answers from a spec and records every call. Four tests pin the
+stub `git` on `PATH` that answers from a spec and records every call; prepare-venv's tests link the
+stand-in `tests/stubs/python3` (a `/bin/sh` script, never written by a test) onto `PATH`, where it
+fakes `-m venv`, the import check and `-m pip install` and records every call. Tests pin the
 architectural line: the source names no delete, and no way of running a program but `subprocess`
-inside `run_git` in `check.py`, which takes only reading git verbs (`stash` only as `stash list`); every verb leaves the same set
+inside `run_git` in `check.py`, which takes only reading git verbs (`stash` only as `stash list`),
+and inside `run_program` in `prepare.py`, which takes only `python3 -m venv
+--system-site-packages DIR`, `python -m pip install -r FILE` and an import line of module names;
+every verb leaves the same set
 of message files (bytes and names) or adds exactly the two it says; session-check leaves the
 project and the mail root byte for byte the same and gives git only reading verbs; a hostile body
 comes back byte for byte.
@@ -913,6 +1015,12 @@ git (2.55.0), on an invented project in a scratch folder: no stash anywhere (exi
 each repository, one of them with no commit yet), then a stash in the checkout named at the start
 and, with what to do, at the end (exit 1 both); every file under each `.git` hashed the same before
 and after.
+And (15 November 2026) `prepare-venv` on the Mac with the real `/usr/bin/python3` (3.9), `venv`
+and `pip`, on an invented project whose folders have a space and a quote, pip kept off the network
+with a wheel made by hand: the output in "`prepare-venv`" above; `eval` of the lines and an import
+through the venv worked; a config naming another model was rewritten, its other lines kept and no
+other file left beside it; nothing was written into the checkout. Not yet run in the Linux virtual
+machine.
 
 ## Known limitations and non-goals
 
@@ -926,6 +1034,8 @@ and after.
 - The tool moves files; it never acts on what a message says. The person in charge decides.
 - Two retirements of the same session's duty folder within one second would collide on the
   `duty-log/` name; the second rename then fails with exit 4 and nothing is lost.
+- `prepare-venv` sets no time limit on `venv`, `pip` or the import check: an install can take as
+  long as it takes. It never removes a venv; a broken one is put right by hand.
 
 ## Notes for users
 
@@ -1010,6 +1120,10 @@ and after.
   line each under what to tell (exit 1), newest first, with when it was made; at the end the line
   says to put it back before the handover or say why it is left. A repository with none gets the
   fact "no stash". It only reads (`git stash list`), and never touches a stash.
+- 15 November 2026: a third command, `prepare-venv`, prepares a project's venv for the Linux
+  virtual machine (venv, packages, the model setting in its config, the model check, the export
+  lines), from a `prepare-venv.conf` in the project's checkout; see "`prepare-venv`". It does what
+  each project's own `setup-linux` did, once for every project. Nothing else changes.
 
 ## Contributing
 
