@@ -857,7 +857,10 @@ commands then run under, so it cannot use that venv. In order:
    each missing file in `MODEL_FILES` is named. Exit 3, after the venv and the config are done, so
    one run reports all it can.
 7. **The export lines** on standard output and nothing else, so `eval "$(prepare-venv …)"` takes
-   them; a path a shell would split is quoted. Progress goes to standard error.
+   them; a path a shell would split is quoted. Progress goes to standard error. They are printed on
+   success, and also when the model check is the only thing that failed (still exit 3), since the
+   venv and the config are good: the project's commands that need no model can run, and the one
+   that needs it refuses in its own words. After any other failure there are no lines.
 
 `--dry-run` prints a `Would …` line on standard output for each step that would do something, then
 the export lines, and runs nothing but the import check (and not that when there is no venv yet).
@@ -894,6 +897,9 @@ prepare-venv: made the venv at $S/venvs/demo's venv
 prepare-venv: installed the packages in $S/demo tools/requirements-linux.txt into $S/venvs/demo's venv
 prepare-venv: wrote $S/conf/demo-tools.conf
 prepare-venv: the model folder $S/models/kokoro does not exist; get the model as the README's "Speech model" says
+export DEMO_TOOLS_PYTHON='$S/venvs/demo'"'"'s venv/bin/python'
+export DEMO_TOOLS_CONF=$S/conf/demo-tools.conf
+export PYTHONDONTWRITEBYTECODE=1
 [exit 3]
 $ (the model put in place, and the same command again)
 export DEMO_TOOLS_PYTHON='$S/venvs/demo'"'"'s venv/bin/python'
@@ -914,7 +920,7 @@ checkout; then the project's commands find their python in `<PREFIX>_PYTHON`.
 |------|---------|
 | 0 | Done: the export lines are on standard output (with `--dry-run`, after the `Would …` lines) |
 | 2 | Refused before anything ran: the venv inside the checkout; no `prepare-venv.conf`, or one that cannot be read or used; the requirements file missing; `--model` or `--conf` missing where the file calls for them, or given where it does not; `--model` holding a line break; `--project` or `--venv` missing |
-| 3 | Something failed while doing it: no `python3` on `PATH`; `venv` or `pip` exited non-zero (its last five lines are shown; the venv is kept, so the next run installs again); the packages installed but the import still fails; the config cannot be read, used or written; the model folder or a model file missing |
+| 3 | Something failed while doing it: no `python3` on `PATH`; `venv` or `pip` exited non-zero (its last five lines are shown; the venv is kept, so the next run installs again); the packages installed but the import still fails; the config cannot be read, used or written; the model folder or a model file missing (this one alone still prints the export lines, the venv and config being good) |
 
 ## Errors and exit codes
 
@@ -965,7 +971,7 @@ was changed after it was sent, so ask the sender.
 ```bash
 cd lobster-tools
 python3 -m venv .venv && .venv/bin/pip install -r requirements-dev.txt
-.venv/bin/pytest                # 419 tests, 98% coverage, about 40 seconds (15 November 2026)
+.venv/bin/pytest                # 423 tests, 98% coverage, about 45 seconds (15 November 2026)
 .venv/bin/ruff check .          # lint
 ```
 
@@ -1124,6 +1130,10 @@ machine.
   virtual machine (venv, packages, the model setting in its config, the model check, the export
   lines), from a `prepare-venv.conf` in the project's checkout; see "`prepare-venv`". It does what
   each project's own `setup-linux` did, once for every project. Nothing else changes.
+- 15 November 2026: when the model check is the only failure (the model folder or one of its files
+  missing), `prepare-venv` now prints the export lines as well, and still exits 3, so `eval` sets
+  the variables and the commands that need no model can run. After any other failure it prints no
+  lines, as before.
 
 ## Contributing
 

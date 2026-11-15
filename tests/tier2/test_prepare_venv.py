@@ -288,13 +288,15 @@ def test_a_model_folder_with_a_line_break_is_refused(scene):
     assert scene.calls() == []
 
 
-# The model check: after the venv and the config, so one run reports all it can.
+# The model check: after the venv and the config, so one run reports all it can. When it is the
+# only failure the export lines are printed as well, still exit 3, since the venv and the config are
+# good (Request 02 from training-video-tools, "Settled" 51).
 
 def test_each_missing_model_file_is_named_after_the_venv_and_the_config_are_done(scene):
     scene.model.mkdir(parents=True)
     (scene.model / "voices.npz").write_bytes(b"x")
     code, out, err = run(*scene.flags())
-    assert (code, out) == (3, "")
+    assert (code, lines(out)) == (3, scene.exports())
     assert lines(err)[-1] == ("prepare-venv: the model folder %s has no model.onnx; get it as the "
                               "README's \"Speech model\" says" % scene.model)
     assert len(scene.calls()) == 4
@@ -303,7 +305,7 @@ def test_each_missing_model_file_is_named_after_the_venv_and_the_config_are_done
 
 def test_a_missing_model_folder_is_one_message(scene):
     code, out, err = run(*scene.flags())
-    assert (code, out) == (3, "")
+    assert (code, lines(out)) == (3, scene.exports())
     assert lines(err)[3:] == ["prepare-venv: the model folder %s does not exist; get the model as "
                               "the README's \"Speech model\" says" % scene.model]
 
@@ -414,12 +416,27 @@ def test_a_dry_run_with_the_venv_but_not_the_packages(scene):
     assert scene.calls() == [scene.import_call()]
 
 
-def test_a_dry_run_still_names_what_the_model_lacks(scene):
+def test_a_dry_run_still_names_what_the_model_lacks_and_prints_the_lines(scene):
     code, out, err = run(*scene.flags(), "--dry-run")
     assert code == 3
-    assert "Would make the venv" in out and "export" not in out
+    assert lines(out) == [
+        "Would make the venv at %s" % scene.venv,
+        "Would install the packages in %s into %s"
+        % (scene.project / "requirements-linux.txt", scene.venv),
+        "Would write %s with SPEECH_MODEL_DIR=%s" % (scene.conf, scene.model)] + scene.exports()
     assert "does not exist" in err
     assert scene.calls() == []
+
+
+@pytest.mark.parametrize("trouble", ["pip-fails", "pip-useless", "unusable-config"])
+def test_another_failure_with_the_model_missing_too_prints_no_lines(scene, trouble):
+    if trouble == "unusable-config":
+        scene.conf.parent.mkdir(parents=True)
+        scene.conf.write_text("not a setting\n", encoding="utf-8")
+    else:
+        scene.mark(trouble, "ERROR: no\n")
+    code, out, _ = run(*scene.flags())
+    assert (code, out) == (3, "")
 
 
 # Failures.
@@ -541,3 +558,14 @@ def test_a_venv_python_that_cannot_be_started_is_reported_not_a_traceback(scene)
     assert lines(err)[0] == ("prepare-venv: %s -m pip install -r %s failed (exit 127); its last "
                              "lines:" % (scene.python, scene.project / "requirements-linux.txt"))
     assert "Permission denied" in lines(err)[1]
+
+
+def test_as_a_program_eval_in_sh_sets_the_variables_when_only_the_model_is_missing(scene):
+    script = ('eval "$("$PV_PYTHON" "$PV" "$@")"; echo "exit=$?"; '
+              'printf "%s\\n" "$DEMO_TOOLS_PYTHON" "$DEMO_TOOLS_CONF"')
+    env = dict(os.environ, PV_PYTHON=sys.executable, PV=str(COMMAND))
+    done = subprocess.run(["/bin/sh", "-c", script, "sh"] + scene.flags(), check=False,
+                          capture_output=True, text=True, env=env, cwd=str(scene.tmp))
+    assert lines(done.stdout) == ["exit=0", scene.python, str(scene.conf)]
+    assert "does not exist" in done.stderr
+

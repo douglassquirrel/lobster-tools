@@ -344,11 +344,11 @@ def prepare(args):
                 if model is not None else [])
     for problem in problems:
         progress(problem)
-    if problems:
-        return EXIT_FAILED
+    # The venv and the config are good even when the model is missing, so the lines are printed
+    # either way: the project's commands that need no model can run (Request 02, "Settled" 51).
     for line in export_lines(project.prefix, python, conf):
         print(line)
-    return EXIT_OK
+    return EXIT_FAILED if problems else EXIT_OK
 
 
 def main(argv=None):
