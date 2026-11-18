@@ -9,7 +9,8 @@ import re
 
 PACKAGE = pathlib.Path(__file__).resolve().parents[2]
 SOURCES = (sorted((PACKAGE / "lobstertools").glob("*.py"))
-           + [PACKAGE / "lobster-mail", PACKAGE / "session-check", PACKAGE / "prepare-venv", PACKAGE / "fetch-deb"])
+           + [PACKAGE / "lobster-mail", PACKAGE / "session-check", PACKAGE / "prepare-venv", PACKAGE / "fetch-deb",
+              PACKAGE / "request"])
 DELETE = re.compile(r"os\.remove\b|os\.unlink\b|shutil\.rmtree\b|\.unlink\(|\brmdir\b")
 RUNS = re.compile(r"\bsubprocess\b|\bos\.system\b|\bos\.popen\b|\bos\.exec|\bos\.spawn")
 
@@ -19,7 +20,7 @@ def lines(path):
 
 
 def test_the_source_names_no_delete():
-    assert len(SOURCES) >= 6, SOURCES
+    assert len(SOURCES) >= 12, SOURCES
     found = ["%s:%d: %s" % (p.name, n, t.strip()) for p in SOURCES for n, t in lines(p)
              if DELETE.search(t)]
     assert found == []

@@ -92,3 +92,6 @@ def every_file(root):
             for path in folder.iterdir():
                 found[path.name] = hashlib.sha256(path.read_bytes()).hexdigest()
     return found
+
+
+from request_helpers import world  # noqa: F401  (the request tests' scratch world)

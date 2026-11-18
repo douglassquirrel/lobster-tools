@@ -31,6 +31,11 @@ from Debian packages (`apt-get download`), unpacks them into a folder (`dpkg-deb
 wrapper that puts their libraries on `LD_LIBRARY_PATH`, and prints the `export` line naming it, such
 as `RSVG_CONVERT` for `rsvg-convert`.
 
+The fifth is **`request`**, which keeps the bookkeeping of requests between projects from the mail:
+it makes the file for the next numbered request, sends it, lists every request a project asked and
+was asked with how each stands, shows one with its replies, answers one and closes one. The register
+is worked out from the project's own mailbox and request files each time it runs, and kept nowhere.
+
 ## Requirements
 
 - macOS with the command-line developer tools, which give `/usr/bin/python3` (Python 3.9 or
@@ -49,6 +54,7 @@ cd lobster-tools
 ./session-check --help
 ./prepare-venv --help
 ./fetch-deb --help
+./request --help
 ```
 
 The command is run as `./lobster-mail` from the checkout, as every example below does; nothing
@@ -991,6 +997,104 @@ fetch-deb: no apt-get on PATH; fetch-deb runs where apt is (Debian, Ubuntu), suc
 | 2 | Refused before anything ran: a name that is not a program, variable or package name; `--into`, `--program` or `--var` missing |
 | 3 | Something failed: no `apt-get` or `dpkg-deb` on `PATH`; the download or an unpacking failed or gave no answer in 15 minutes; fewer files than packages; the program not in the packages; the folder or the wrapper cannot be made or written |
 
+### `request`: the bookkeeping of requests between projects
+
+```
+request new    --to PROJECT --title TEXT [--follows NN] [--dry-run]
+request send   NN [--dry-run] [--json]
+request list   [--open] [--json]
+request show   NN | PROJECT NN [--json]
+request answer PROJECT NN FILE [--dry-run] [--json]
+request close  NN [--dry-run]
+```
+
+Every verb also takes `--as`, `--root`, `--project DIR` and `--folder DIR`. It is run from the
+project's folder (or given `--project`): the mailbox is `--as`, else `SELF` in the project's
+`lobster.conf`, else the folder's name less `-code`; the request files are in `--folder`, else
+`requests/` when `lobster.conf` says `KIND=code` and `tools/` when it says `KIND=non-code`.
+
+- **What a request is.** A message, not a reply, whose subject is exactly `Request N: TITLE`. Its
+  replies are the messages whose `In-Reply-To` leads back to it, a reply to a reply included. Any
+  subject the mailbox has sent that begins `Request N` (a follow-up, an addendum) holds the number N,
+  as does any file `request-N-….md`, so no number is used twice. Other messages whose subject names a
+  request ("Request: …", "Update on Request 4: …") are listed apart as not counted, and nothing is
+  guessed about them.
+- **`new`** writes `request-NN-<title as a slug>.md` for the next number, never over a file that is
+  there: the heading `# Request NN: TEXT`, a line `To: PROJECT`, a line `Follows request MM.` with
+  `--follows`, and the five sections `## Need`, `## Ask`, `## Test ideas`, `## Private`,
+  `## Missing`, empty. It sends nothing.
+- **`send NN`** sends that file, as it is, to the project on its `To:` line, with the subject
+  `Request NN: TEXT` from its heading, as `lobster-mail send` does. Refused, nothing sent: a number
+  already sent, no file or two files for NN, no heading or `To:` line, all five sections empty. The
+  file is never changed.
+- **`list`** prints, for each request the project asked, its number, to whom, the date sent, its
+  state (`drafted`, `sent`, `answered`: a reply waits in `new/` or `open/`, `closed`: every reply in
+  `done/`), days waiting and title; for each it was asked, the asker's number, from whom, the date,
+  its state (`waiting here`, `claimed`, `answered`: a reply sent, `done here`), days waiting and
+  title. It reads only the project's own mailbox, so it cannot say whether the other project has
+  claimed a request. `--open` leaves out what is closed and what is not counted.
+- **`show NN`** prints the project's own request, the id and date of it and of each reply, its state,
+  and the text as sent; it says so when the kept file no longer matches what was sent. **`show
+  PROJECT NN`** does the same for one it was asked, with the line for its PLAN.md heading.
+- **`answer PROJECT NN FILE`** replies to the request PROJECT numbered NN, as `lobster-mail reply`
+  does (`-` for standard input). **`close NN`** moves every reply to the project's own request NN
+  that is in `new/` or `open/` to `done/`, as `lobster-mail done` does.
+
+It never edits, moves back or deletes a message or a request file, never reads another project's
+mailbox, and decides nothing: a session still reports each request and each reply to the person it
+works for. A run on a scratch root, 18 November 2026 (`$S` the scratch folder; the asker's side):
+
+```
+$ request new --to helper --title "A tool to count words"
+Made request 01 for helper:
+  $S/asker-code/requests/request-01-a-tool-to-count-words.md
+$ request send 01
+request send: $S/asker-code/requests/request-01-a-tool-to-count-words.md has nothing under any of its five sections (Need, Ask, Test ideas, Private, Missing); write the request first
+[exit 3]
+$ request send 01                        (after writing the Need)
+Sent 2026-11-18-0926-asker-request-01-a-tool-to-count-words to helper
+  $S/mail/helper/new/2026-11-18-0926-asker-request-01-a-tool-to-count-words.md
+  $S/mail/asker/sent/2026-11-18-0926-asker-request-01-a-tool-to-count-words.md
+  SHA-256 of the file: e92c976e4df255203c420452b0a12ef34aa3484ad74634670f88251fe84b9176
+$ request list
+Asked by asker (1):
+  01  to helper         2026-11-18  sent          0 days   A tool to count words
+```
+
+and the helper's, after `lobster-mail ack`:
+
+```
+$ request show asker 01
+Request 01 from asker: A tool to count words
+  received 2026-11-18T09:26:42Z as 2026-11-18-0926-asker-request-01-a-tool-to-count-words (open/)
+  state: claimed
+  for PLAN.md: (Request 01 from asker, message `2026-11-18-0926-asker-request-01-a-tool-to-count-words`, 18 November 2026)
+
+# Request 01: A tool to count words
+…
+$ request answer asker 01 answer.md
+Replied 2026-11-18-0926-helper-re-request-01-a-tool-to-count-words to asker
+…
+```
+
+and the asker's again:
+
+```
+$ request close 01
+Done 2026-11-18-0926-helper-re-request-01-a-tool-to-count-words: new/ -> done/
+$ request close 01
+request close: every reply to request 01 is in done/ already
+[exit 3]
+```
+
+| Code | Meaning |
+|------|---------|
+| 0 | Done; with `--dry-run`, everything checked and nothing written; `list` with no requests at all |
+| 2 | Bad arguments: no verb; `--to` or `--title` missing; a title empty or not one line; a number that is not a whole number; `show` with other than one or two arguments; no `KIND` in `lobster.conf` and no `--folder`; `lobster.conf` that cannot be read; no mail root |
+| 3 | A precondition is not met: no such mailbox; `--follows` a request the project never made; `send` of a number already sent, with no file or two files, with no heading or `To:` line, or with all five sections empty; `show`, `answer` or `close` of a request that does not exist; two requests with one number from one project (use `lobster-mail read` or `reply` with the id); `close` with no reply, or every reply closed already |
+| 4 | Could not write or rename (as `lobster-mail`) |
+| 7 | Delivered, but no copy in `sent/` (as `lobster-mail`): do not send it again |
+
 ## Errors and exit codes
 
 Every failure is one line on standard error, `lobster-mail <verb>: <what happened> (<what to do>)`,
@@ -1040,7 +1144,7 @@ was changed after it was sent, so ask the sender.
 ```bash
 cd lobster-tools
 python3 -m venv .venv && .venv/bin/pip install -r requirements-dev.txt
-.venv/bin/pytest                # 519 tests, 99% coverage, about 55 seconds (15 November 2026)
+.venv/bin/pytest                # 619 tests, 98% coverage, about 45 seconds (18 November 2026)
 .venv/bin/ruff check .          # lint
 ```
 
@@ -1102,7 +1206,9 @@ machine. And (15 November 2026) `--set` and `--tmpdir` the same way: the setting
 on a second run and rewritten, nothing else left in the config's folder; `TMPDIR` made, exported and
 taken by the venv's Python as its temporary folder; a bad `--set` refused. `fetch-deb` on the Mac:
 `--help`, and a real run refused for want of apt (exit 3, nothing made). Its real check needs the
-Linux virtual machine: not yet done.
+Linux virtual machine: not yet done. And (18 November 2026) `request` on a scratch root with two
+scratch projects and the real clock: each verb at both ends, the refusals, the changed file named by
+`show`; the output in "`request`" above. Not yet run in the Linux virtual machine.
 
 ## Known limitations and non-goals
 
@@ -1219,6 +1325,11 @@ Linux virtual machine: not yet done.
   missing), `prepare-venv` now prints the export lines as well, and still exits 3, so `eval` sets
   the variables and the commands that need no model can run. After any other failure it prints no
   lines, as before.
+
+- 18 November 2026: a fifth command, `request`, keeps the bookkeeping of requests between projects
+  from the mail (the next number's file, sending it, the register, one request with its replies,
+  answering, closing); see "`request`". Nothing that exists changes: no message, register or request
+  file is touched.
 
 ## Contributing
 

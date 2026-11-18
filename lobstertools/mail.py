@@ -366,10 +366,11 @@ def cmd_reply(args, stdin=None):
                    "reply")
 
 
-def thread_entries(box):
-    """Every message with headers in the four folders, by id, with its In-Reply-To."""
+def thread_entries(box, boxes=BOXES):
+    """Every message with headers in the four folders (or those named), by id, with its
+    In-Reply-To."""
     found = {}
-    for name in BOXES:
+    for name in boxes:
         for filename in os.listdir(box.folder(name)):
             if filename.startswith(".") or not filename.endswith(".md"):
                 continue
