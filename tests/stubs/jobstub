@@ -1,0 +1,18 @@
+#!/bin/sh
+# Stand-in for a long job in job's tests (tests/tier2/test_job_run.py, test_job_wait.py). Run by
+# its full path; never written by a test.  jobstub NAME CODE [ARG ...]
+# Appends "start NAME DIR" (DIR its working folder) to $JOBSTUB_DIR/log, writes each ARG to stdout
+# followed by a NUL and "err NAME" to stderr; then, if $JOBSTUB_DIR/hold-NAME exists, waits until
+# $JOBSTUB_DIR/go-NAME does; appends "end NAME" to the log and exits CODE.
+d=$JOBSTUB_DIR
+name=$1
+code=$2
+shift 2
+echo "start $name $(pwd -P)" >> "$d/log"
+for arg in "$@"; do printf '%s\0' "$arg"; done
+echo "err $name" >&2
+if [ -f "$d/hold-$name" ]; then
+    while [ ! -f "$d/go-$name" ]; do sleep 0.02; done
+fi
+echo "end $name" >> "$d/log"
+exit "$code"

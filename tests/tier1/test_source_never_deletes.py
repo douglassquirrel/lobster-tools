@@ -3,14 +3,16 @@ exceptions settled: session-check runs git, with reading verbs only, from run_gi
 nowhere else (PLAN.md "Settled" 43); prepare-venv runs `python3 -m venv`, the venv's `pip install -r`
 and its import check, from run_program in prepare.py and nowhere else ("Settled" 49); fetch-deb runs
 `apt-get download` and `dpkg-deb -x`, from run_program in fetchdeb.py and nowhere else ("Settled"
-54). Pinned by reading the source, before any test runs it."""
+54). job starts the commands a person queues, from run_job in job.py and nowhere else: L1 is about
+mail messages and does not bear on it ("Settled" 63, 64). Pinned by reading the source, before any
+test runs it."""
 import pathlib
 import re
 
 PACKAGE = pathlib.Path(__file__).resolve().parents[2]
 SOURCES = (sorted((PACKAGE / "lobstertools").glob("*.py"))
            + [PACKAGE / "lobster-mail", PACKAGE / "session-check", PACKAGE / "prepare-venv", PACKAGE / "fetch-deb",
-              PACKAGE / "request"])
+              PACKAGE / "request", PACKAGE / "job", PACKAGE / "wait-for-file"])
 DELETE = re.compile(r"os\.remove\b|os\.unlink\b|shutil\.rmtree\b|\.unlink\(|\brmdir\b")
 RUNS = re.compile(r"\bsubprocess\b|\bos\.system\b|\bos\.popen\b|\bos\.exec|\bos\.spawn")
 
@@ -20,7 +22,7 @@ def lines(path):
 
 
 def test_the_source_names_no_delete():
-    assert len(SOURCES) >= 12, SOURCES
+    assert len(SOURCES) >= 16, SOURCES
     found = ["%s:%d: %s" % (p.name, n, t.strip()) for p in SOURCES for n, t in lines(p)
              if DELETE.search(t)]
     assert found == []
@@ -28,7 +30,7 @@ def test_the_source_names_no_delete():
 
 def test_nothing_but_check_py_and_prepare_py_names_a_way_to_run_a_program():
     found = ["%s:%d: %s" % (p.name, n, t.strip()) for p in SOURCES
-             if p.name not in ("check.py", "prepare.py", "fetchdeb.py")
+             if p.name not in ("check.py", "prepare.py", "fetchdeb.py", "job.py")
              for n, t in lines(p) if RUNS.search(t)]
     assert found == []
 
@@ -45,6 +47,33 @@ def runs_outside(name, function):
 
 def test_check_py_runs_a_program_only_inside_run_git():
     assert runs_outside("check.py", "run_git") == []
+
+
+def test_job_py_starts_a_program_only_inside_run_job():
+    assert runs_outside("job.py", "run_job") == []
+    assert "subprocess.Popen(" in (PACKAGE / "lobstertools" / "job.py").read_text("utf-8")
+
+
+SIGNALS = re.compile(r"\bos\.kill\b|\bos\.killpg\b")
+
+
+def test_nothing_but_job_py_sends_a_signal():
+    found = ["%s:%d: %s" % (p.name, n, t.strip()) for p in SOURCES if p.name != "job.py"
+             for n, t in lines(p) if SIGNALS.search(t)]
+    assert found == []
+
+
+def test_job_py_looks_for_a_process_only_in_alive_and_stops_one_only_in_stop_job():
+    where = {}
+    current = None
+    for number, text in lines(PACKAGE / "lobstertools" / "job.py"):
+        if re.match(r"(def |class )", text):
+            current = text.split("(")[0][4:]
+        for name in ("os.killpg(", "os.kill("):
+            if name in text:
+                where.setdefault(name, set()).add(current)
+                break
+    assert where == {"os.kill(": {"alive"}, "os.killpg(": {"stop_job"}}
 
 
 def test_fetchdeb_py_runs_a_program_only_inside_run_program():

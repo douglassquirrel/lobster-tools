@@ -36,6 +36,16 @@ it makes the file for the next numbered request, sends it, lists every request a
 was asked with how each stands, shows one with its replies, answers one and closes one. The register
 is worked out from the project's own mailbox and request files each time it runs, and kept nowhere.
 
+The sixth is **`job`**, a queue of commands run one at a time, in the order added, for a session on
+the Mac that runs long jobs one after another: `job add -- COMMAND` queues one, `job run` (started in
+the background) runs the queue until it is empty, `job wait` (in the background, as `lobster-mail
+wait` is) returns when a job ends, `job list` shows the queue and `job cancel` takes a job off it.
+Each job's output, exit code and times are kept in the queue's folder. No hand-typed waiting loop.
+
+The seventh is **`wait-for-file`**, which returns when a file appears and, with `--stable`, has
+stopped growing, so a delivery half-written is not taken for a whole one. The path is taken whole,
+spaces and `$` and all.
+
 ## Requirements
 
 - macOS with the command-line developer tools, which give `/usr/bin/python3` (Python 3.9 or
@@ -55,6 +65,8 @@ cd lobster-tools
 ./prepare-venv --help
 ./fetch-deb --help
 ./request --help
+./job --help
+./wait-for-file --help
 ```
 
 The command is run as `./lobster-mail` from the checkout, as every example below does; nothing
@@ -1095,6 +1107,155 @@ request close: every reply to request 01 is in done/ already
 | 4 | Could not write or rename (as `lobster-mail`) |
 | 7 | Delivered, but no copy in `sent/` (as `lobster-mail`): do not send it again |
 
+### `job`: run commands one at a time, in order
+
+```
+job add    [--queue NAME] [--dir DIR] [--go-on] [--dry-run] -- COMMAND [ARG ...]
+job run    [--queue NAME] [--dir DIR]
+job list   [--queue NAME] [--dir DIR]
+job wait   [--queue NAME] [--dir DIR] [--timeout SECONDS]
+job cancel [--queue NAME] [--dir DIR] [--running] [--dry-run] ID
+job --help
+```
+
+For a session on the Mac (Claude Code, or a person at Terminal) that runs long jobs one after another
+and wants the next to start when one ends. Not for a Claude session in the desktop app, whose shell
+calls are cut off after about three minutes.
+
+**The queue** is a folder, `jobs/NAME/` in the working folder (`NAME` is `default` unless `--queue`;
+`--dir` puts the queues elsewhere). It holds one folder per job, numbered `0001`, `0002` and on (a
+number is never used twice), in `waiting/`, `running/`, `done/` or `cancelled/`, moved between them by
+rename. A job's folder holds `job.json` (the arguments, the folder it was added from, when, and
+`--go-on`), then `started.json` (when, and the process id), `output` (its standard output and error
+together) and `ended.json` (when, its exit code or the signal that ended it), or `cancelled.json`.
+Nothing is deleted or rewritten. Keep `jobs/` out of git (a line in `.gitignore` or
+`.git/info/exclude`). A queue name is letters, figures, `-` and `_`.
+
+- **`add`** puts the command at the end. Everything after `--` is the command and its arguments,
+  passed exactly as given, never through a shell (write `sh -c '…'` yourself if you want one). The job
+  runs in the folder `add` was run from. It says whether a runner is running, and if not, the line to
+  start one. `--go-on`: if this job fails, the queue goes on past it.
+- **`run`** runs the waiting jobs, one at a time, in number order, taking jobs added while it runs,
+  and ends when the queue is empty (exit 0). Only one `run` may run a queue: a second is refused (exit
+  3). **A job that fails stops the queue** (exit 1), unless it was added with `--go-on`: the jobs after
+  it stay waiting, and `run` again goes on with them. A command that cannot start is a failure with
+  exit code 127, the reason in its `output`. Start it in the background; it prints a line as each job
+  starts and ends.
+- **`wait`** returns when a job ends (exit 0, naming each job that ended and how), or at once when
+  the queue is empty, or when the running job was interrupted. When jobs wait and no runner takes the
+  queue within five seconds, it says so and prints the line to start one (exit 0). Exit 5 at the
+  timeout (default 2700 seconds, 45 minutes; 0 waits as long as it takes). It reads only, and knows a
+  job has ended by its folder moving to `done/`, never by matching command lines.
+- **`list`** shows what is done (how it ended, how long it took), running (since when, its process),
+  waiting and cancelled. It reads only.
+- **`cancel ID`** (`3` or `0003`) moves a waiting job to `cancelled/`. A running job is stopped only
+  with `--running`: SIGTERM to its process group, never SIGKILL; the runner records "ended by signal
+  15", and the queue stops as for any failure.
+- **A runner that stops before its job ends** (the Mac restarted, the session that started it ended):
+  the job is left in `running/`. Each job runs in its own process group, so it may still be running:
+  `list` says "no runner: still running", and a new `run` is refused until it ends (or is stopped with
+  `cancel --running`). Once its process is gone, `list` says "interrupted", and the next `run` moves it
+  to `done/` marked interrupted, with no exit code, and stops; `run` again goes on.
+
+`--dry-run` on `add` and `cancel` says what would be done and changes nothing.
+
+**For a Claude session**: queue the jobs with `job add`, then start `job run` as a background command
+and `job wait` as another, as `lobster-mail wait` is run. When `job wait` returns, report what it
+printed and act on it as the project's rules say, then run `job wait` again while jobs remain. Never
+a waiting loop typed at the prompt.
+
+From the Tier 3 check (21 November 2026, a scratch folder; the checkout's path shortened to `…`):
+
+```
+$ job add -- sh -c 'sleep 2; echo first'
+Added job 0001 to queue default: sh -c 'sleep 2; echo first'
+No runner for queue default: start one in the background with:
+  …/lobster-tools/job run
+$ job add -- sh -c 'echo second; exit 3'
+Added job 0002 to queue default: sh -c 'echo second; exit 3'
+…
+$ job add -- echo third
+Added job 0003 to queue default: echo third
+…
+$ job run &           (in the background)
+$ job wait --timeout 30
+Job 0001 ended: exit 0 after 2s: sh -c 'sleep 2; echo first'
+Job 0002 ended: exit 3 after 0s: sh -c 'echo second; exit 3'
+$ job list
+Queue default ($S/work dir/jobs/default): no runner
+Done:
+  0001  exit 0 after 2s, ended 2026-11-21T16:21:34+00:00  sh -c 'sleep 2; echo first'
+  0002  exit 3 after 0s, ended 2026-11-21T16:21:34+00:00  sh -c 'echo second; exit 3'
+Waiting:
+  0003  added 2026-11-21T16:21:32+00:00  echo third
+```
+
+and the runner, which stopped at the failure:
+
+```
+Job 0001 started: sh -c 'sleep 2; echo first'
+Job 0001 ended: exit 0 after 2s
+Job 0002 started: sh -c 'echo second; exit 3'
+Job 0002 ended: exit 3 after 0s
+job: job 0002 failed (exit 3), so the queue stopped with 1 waiting; to go on, run it again:
+  …/lobster-tools/job run
+or cancel what should not run
+[exit 1]
+```
+
+Stopping a running job:
+
+```
+$ job cancel 0006
+job: job 0006 is running; add --running to stop it (SIGTERM)
+[exit 3]
+$ job cancel --running 0006
+Sent SIGTERM to job 0006 (process group 84193): sleep 30; its runner records how it ended
+```
+
+| Code | Meaning |
+|------|---------|
+| 0 | Done: added, listed, cancelled; `run` ran the queue to its end (with `--go-on` jobs that failed counted); `wait` has something to report |
+| 1 | `run`: a job failed or was interrupted, and the queue stopped; `cancel --running`: the signal could not be sent |
+| 2 | Bad arguments: no command after `--`, or no `--`; a queue name that could leave its folder; an id that is not a number; a negative `--timeout` |
+| 3 | Not now: another `run` holds the queue; a job is still running with no runner; `cancel` of a job running (without `--running`), already ended or already cancelled, or whose process is gone |
+| 4 | `cancel`: no job with that number in the queue |
+| 5 | `wait`: nothing ended before the timeout |
+
+### `wait-for-file`: wait until a file appears
+
+```
+wait-for-file PATH [--timeout SECONDS] [--stable SECONDS] [--glob]
+wait-for-file --help
+```
+
+Looks every second and, when PATH exists, prints it and exits 0; with `--stable SECONDS`, only once
+its size and modification time have not changed for that long. Exit 5 at the timeout (default 2700
+seconds; 0 waits as long as it takes), saying whether the file never appeared or was still changing.
+PATH is one path, taken whole (spaces, `$`, quotes and `*` are part of the name); with `--glob` it is
+a pattern, and every file it matches is printed, one a line. It reads only. For a Claude session on
+the Mac, run it as a background command and report when it returns.
+
+From the Tier 3 check (21 November 2026): a file written in three pieces a second apart, starting
+two seconds after the wait began:
+
+```
+$ wait-for-file "$S/drop zone/take $1 'final'.wav" --stable 2 --timeout 30
+$S/drop zone/take $1 'final'.wav
+[exit 0] after 6 s, size 6
+$ wait-for-file "$S/drop zone/*.wav" --timeout 2
+wait-for-file: $S/drop zone/*.wav did not appear in 2 seconds
+[exit 5]
+$ wait-for-file "$S/drop zone/*.wav" --glob
+$S/drop zone/take $1 'final'.wav
+```
+
+| Code | Meaning |
+|------|---------|
+| 0 | The file is there (and, with `--stable`, unchanged for that long); its path is on standard output |
+| 2 | Bad arguments: no PATH; a negative `--timeout` or `--stable` |
+| 5 | The timeout passed: the file did not appear, or was still changing |
+
 ## Errors and exit codes
 
 Every failure is one line on standard error, `lobster-mail <verb>: <what happened> (<what to do>)`,
@@ -1144,7 +1305,7 @@ was changed after it was sent, so ask the sender.
 ```bash
 cd lobster-tools
 python3 -m venv .venv && .venv/bin/pip install -r requirements-dev.txt
-.venv/bin/pytest                # 619 tests, 98% coverage, about 45 seconds (18 November 2026)
+.venv/bin/pytest                # 707 tests, 98% coverage, about 45 seconds (21 November 2026)
 .venv/bin/ruff check .          # lint
 ```
 
@@ -1155,13 +1316,16 @@ clock fixed by `LOBSTER_MAIL_NOW` (an ISO 8601 time; for tests only); session-ch
 stub `git` on `PATH` that answers from a spec and records every call; prepare-venv's tests link the
 stand-in `tests/stubs/python3` (a `/bin/sh` script, never written by a test) onto `PATH`, where it
 fakes `-m venv`, the import check and `-m pip install` and records every call; fetch-deb's link
-`tests/stubs/apt-get` and `tests/stubs/dpkg-deb` the same way. Tests pin the
+`tests/stubs/apt-get` and `tests/stubs/dpkg-deb` the same way; job's tests run the stand-in job
+`tests/stubs/jobstub` (a `/bin/sh` script, by its full path) and start `job run` as a program in a
+few, and wait-for-file's and job wait's replace the clock and the sleep. Tests pin the
 architectural line: the source names no delete, and no way of running a program but `subprocess`
 inside `run_git` in `check.py`, which takes only reading git verbs (`stash` only as `stash list`),
 and inside `run_program` in `prepare.py`, which takes only `python3 -m venv
 --system-site-packages DIR`, `python -m pip install -r FILE` and an import line of module names,
 and inside `run_program` in `fetchdeb.py`, which takes only `apt-get download PACKAGE...` and
-`dpkg-deb -x FILE DIR`;
+`dpkg-deb -x FILE DIR`, and inside `run_job` in `job.py`, which starts the commands a person queued,
+never through a shell (and no signal sent but from `alive` and `stop_job` there);
 every verb leaves the same set
 of message files (bytes and names) or adds exactly the two it says; session-check leaves the
 project and the mail root byte for byte the same and gives git only reading verbs; a hostile body
@@ -1209,6 +1373,13 @@ taken by the venv's Python as its temporary folder; a bad `--set` refused. `fetc
 Linux virtual machine: not yet done. And (18 November 2026) `request` on a scratch root with two
 scratch projects and the real clock: each verb at both ends, the refusals, the changed file named by
 `show`; the output in "`request`" above. Not yet run in the Linux virtual machine.
+And (21 November 2026) `job` and `wait-for-file` in a scratch folder with real `sh`, `sleep` and
+`echo` and the real clock: three jobs, the second failing, with a background runner and `job wait`;
+`run` again going on; a second runner refused; a job whose arguments hold another job's command line;
+`cancel` of a waiting job and `--running` of a running one; `wait-for-file` on a growing file with a
+space, a `$` and quotes in its name, with `--stable`, `--glob` and a timeout. The output is in
+"`job`" and "`wait-for-file`" above. The first run found a race: `job wait` started just after a
+background `job run` said there was no runner; it now gives a runner five seconds.
 
 ## Known limitations and non-goals
 
@@ -1224,6 +1395,11 @@ scratch projects and the real clock: each verb at both ends, the refusals, the c
   `duty-log/` name; the second rename then fails with exit 4 and nothing is lost.
 - `prepare-venv` sets no time limit on `venv`, `pip` or the import check: an install can take as
   long as it takes. It never removes a venv; a broken one is put right by hand.
+- `job` has no daemon: nothing runs a queue unless a `job run` is running. Not checked: whether a
+  background `job run` outlives the Claude Code session that started it. A job left running by a
+  runner that stopped is known by its process id, which the system could in time give to another
+  process. One queue serves one project; a queue is not shared between projects. Not for a desktop
+  app session's shell, whose calls are cut off.
 
 ## Notes for users
 
@@ -1330,6 +1506,10 @@ scratch projects and the real clock: each verb at both ends, the refusals, the c
   from the mail (the next number's file, sending it, the register, one request with its replies,
   answering, closing); see "`request`". Nothing that exists changes: no message, register or request
   file is touched.
+- 21 November 2026: two new commands, `job` (a queue of commands run one at a time, in order, with
+  `job wait` to be told when one ends) and `wait-for-file` (wait until a file appears, and with
+  `--stable` until it stops growing); see "`job`" and "`wait-for-file`". For a session on the Mac, in
+  place of a waiting loop typed at the prompt. Nothing that exists changes.
 
 ## Contributing
 
