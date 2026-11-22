@@ -5,6 +5,7 @@ import io
 
 import pytest
 from job_helpers import jobstub_is_never_written_over, scene  # noqa: F401  (job's fixtures)
+from secrets_helpers import vault  # noqa: F401  (secrets' fixture)
 
 from lobstertools import mail
 

@@ -8,3 +8,8 @@
 # machine or shell that sends or reads mail; in Claude's Linux device shell that is the mounted
 # path, e.g. ~/mnt/mail.
 #MAIL_ROOT=~/projects/mail
+#
+# The folder that holds every set of secrets (secrets). Each set is a folder in it (mode 700)
+# holding env.sh (mode 600). Never inside a git repository. In the Linux device shell, the mounted
+# path, e.g. ~/mnt/secrets.
+#SECRETS_ROOT=~/projects/secrets

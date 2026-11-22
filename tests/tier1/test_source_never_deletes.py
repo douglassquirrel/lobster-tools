@@ -4,15 +4,16 @@ nowhere else (PLAN.md "Settled" 43); prepare-venv runs `python3 -m venv`, the ve
 and its import check, from run_program in prepare.py and nowhere else ("Settled" 49); fetch-deb runs
 `apt-get download` and `dpkg-deb -x`, from run_program in fetchdeb.py and nowhere else ("Settled"
 54). job starts the commands a person queues, from run_job in job.py and nowhere else: L1 is about
-mail messages and does not bear on it ("Settled" 63, 64). Pinned by reading the source, before any
-test runs it."""
+mail messages and does not bear on it ("Settled" 63, 64). secrets runs the command a person gives
+`secrets run`, from run_command in secrets.py and nowhere else ("Settled" 73). Pinned by reading the
+source, before any test runs it."""
 import pathlib
 import re
 
 PACKAGE = pathlib.Path(__file__).resolve().parents[2]
 SOURCES = (sorted((PACKAGE / "lobstertools").glob("*.py"))
            + [PACKAGE / "lobster-mail", PACKAGE / "session-check", PACKAGE / "prepare-venv", PACKAGE / "fetch-deb",
-              PACKAGE / "request", PACKAGE / "job", PACKAGE / "wait-for-file"])
+              PACKAGE / "request", PACKAGE / "job", PACKAGE / "wait-for-file", PACKAGE / "secrets"])
 DELETE = re.compile(r"os\.remove\b|os\.unlink\b|shutil\.rmtree\b|\.unlink\(|\brmdir\b")
 RUNS = re.compile(r"\bsubprocess\b|\bos\.system\b|\bos\.popen\b|\bos\.exec|\bos\.spawn")
 
@@ -30,7 +31,7 @@ def test_the_source_names_no_delete():
 
 def test_nothing_but_check_py_and_prepare_py_names_a_way_to_run_a_program():
     found = ["%s:%d: %s" % (p.name, n, t.strip()) for p in SOURCES
-             if p.name not in ("check.py", "prepare.py", "fetchdeb.py", "job.py")
+             if p.name not in ("check.py", "prepare.py", "fetchdeb.py", "job.py", "secrets.py")
              for n, t in lines(p) if RUNS.search(t)]
     assert found == []
 
@@ -43,6 +44,11 @@ def runs_outside(name, function):
         if RUNS.search(text) and not inside and text != "import subprocess":
             outside.append("%s:%d: %s" % (name, number, text.strip()))
     return outside
+
+
+def test_secrets_py_starts_a_program_only_inside_run_command():
+    assert runs_outside("secrets.py", "run_command") == []
+    assert "subprocess.Popen(" in (PACKAGE / "lobstertools" / "secrets.py").read_text("utf-8")
 
 
 def test_check_py_runs_a_program_only_inside_run_git():

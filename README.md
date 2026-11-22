@@ -46,6 +46,12 @@ The seventh is **`wait-for-file`**, which returns when a file appears and, with 
 stopped growing, so a delivery half-written is not taken for a whole one. The path is taken whole,
 spaces and `$` and all.
 
+The eighth is **`secrets`**, one way for every project to keep the secrets a command needs (a token,
+a client id) and to run the command with them: named sets, each a private folder holding `env.sh`,
+under one root; `secrets set` puts a value in without showing it, `secrets check` says which names
+are set or empty without showing any, and `secrets run SET -- COMMAND` runs a command with that set's
+variables, masking any value it prints. No value is ever printed.
+
 ## Requirements
 
 - macOS with the command-line developer tools, which give `/usr/bin/python3` (Python 3.9 or
@@ -1256,6 +1262,136 @@ $S/drop zone/take $1 'final'.wav
 | 2 | Bad arguments: no PATH; a negative `--timeout` or `--stable` |
 | 5 | The timeout passed: the file did not appear, or was still changing |
 
+### `secrets`: keep secrets in one place and run a command with them
+
+```
+secrets init  SET --names NAME [NAME ...] [--dry-run]
+secrets set   SET NAME [--add] [--stdin] [--dry-run]
+secrets check SET [SET ...] [--need NAME ...]
+secrets run   SET [SET ...] [--need NAME ...] [--no-mask] -- COMMAND [ARG ...]
+secrets list
+secrets --help        (and each verb's --help)
+```
+
+Every verb also takes `--root DIR` and, in place of a set's name, `--set-dir DIR` (repeatable for
+`check` and `run`).
+
+A **set** is a folder named for what it opens (`google`, `dropbox`) holding one file, `env.sh`, of
+`export NAME='value'` lines. The folder is mode 700, the file 600, and neither is ever in a git
+repository. Claws that share a credential share the set. The sets sit under one **root**: `--root
+DIR`, else `LOBSTER_SECRETS_ROOT`, else `SECRETS_ROOT` in `~/.lobster-tools.conf` (for instance
+`SECRETS_ROOT=~/projects/secrets`). There is no built-in default. A set's name is lower-case letters,
+figures, `-` and `_`; a variable's name is capitals, figures and `_`.
+
+`env.sh` is still a shell file, so `set -a; . env.sh; set +a` goes on working. But `secrets` never
+runs it: it reads it line by line. It takes blank lines, `#` comments, and `export NAME=VALUE` or
+`NAME=VALUE`, where VALUE is in single quotes (`'\''` for a quote inside), in double quotes holding
+no `$`, `` ` `` or `\`, or bare, with no character the shell treats specially. Any other line is
+refused (exit 3) by its number, never its text, and so is a name given twice.
+
+No value is ever printed, logged, put in an argument list or written anywhere but the set's own
+`env.sh`. `secrets` has no network access and changes nothing outside the set's folder.
+
+- **`init`** makes the folder (700) and `env.sh` (600), with `export NAME=''` for each name. It
+  refuses a set that exists (exit 4) and never writes over a file. The root must already exist; if
+  it does not, it says so with the `mkdir -m 700` line to make it.
+- **`set`** replaces one name's line, for a person at the keyboard. It asks for the value on the
+  terminal without echoing it. With `--stdin` it reads standard input to its end, less one final
+  newline, for a tool that hands it a value. With neither a terminal nor `--stdin` it refuses, so a
+  stray pipe writes nothing. It refuses a name the set lacks unless given `--add`, and refuses an
+  empty value or one holding a line break or a NUL. Every other line stays byte for byte, and the
+  file keeps its mode. The new file is written in the set's folder and renamed over `env.sh`, so a
+  failed write leaves it as it was. It prints `NAME set in SET (it was empty | replaced | added)`.
+- **`check`** prints each name as `set` or `empty`, and each `--need` name that is in none of the
+  sets as missing; never a value, a length or a hash. It also says when the folder or the file can
+  be read by anyone but you, or when the folder sits inside a git working tree (found by looking for
+  `.git`, without running git). It only reads. Exit 0: every name, or every `--need` name, is set
+  and nothing is unsafe. Exit 1: one is empty or missing. Exit 6: all are set, but the place is
+  unsafe. Exit 3: a set is not there or cannot be read.
+- **`run`** runs COMMAND with the named sets' variables added to its environment, and nothing from
+  any set not named. This replaces typing `set -a; . …; set +a`. The arguments go to the program as
+  given, never through a shell. It refuses a set that is unsafe or not there, a `--need` name that
+  is empty or in no set, and a name that two sets both give. **Masking** (on by default): every
+  value of 8 characters or more is shown as `[secret]` in what the command prints, on both streams.
+  The cost: the command sees a pipe, not a terminal, on its output, so a program may hold its output
+  back until it ends, turn colours off, or not show a prompt meant for a terminal (standard input
+  still comes straight from the terminal). The two streams keep their order within each but not
+  between them. A value printed changed (URL-encoded, split, base64) is not caught: masking is a
+  safety net, not a guarantee. Shorter values are not masked, because masking them would garble
+  ordinary output. `--no-mask` gives the command the terminal as it is, for a person at the
+  keyboard. A sign-in that prints an address holding the client id needs it, for one.
+- **`list`** prints each set under the root and the names it holds, with `(unsafe)` after one whose
+  modes or place are wrong. A set it cannot read shows the line number at fault.
+
+From the Tier 3 check (22 November 2026, a scratch root `$T`, invented names and value):
+
+```
+$ secrets init demo --names DEMO_ID DEMO_TOKEN --root $T
+Made $T/demo (700) and $T/demo/env.sh (600): DEMO_ID DEMO_TOKEN
+$ printf 'invented-token-1234\n' | secrets set demo DEMO_TOKEN --stdin --root $T
+DEMO_TOKEN set in demo (it was empty)
+$ secrets check demo --root $T
+demo ($T/demo):
+  DEMO_ID     empty
+  DEMO_TOKEN  set
+[exit 1]
+$ secrets run demo --root $T -- /usr/bin/printenv DEMO_TOKEN
+[secret]
+$ secrets run demo --root $T -- /bin/sh -c 'echo "to stderr: $DEMO_TOKEN" >&2; exit 4'
+to stderr: [secret]
+[exit 4]
+$ secrets run demo --root $T --need MISSING_ONE -- /usr/bin/true
+secrets: MISSING_ONE is in none of the sets: demo
+[exit 125]
+$ chmod 644 $T/demo/env.sh; secrets run demo --root $T -- /usr/bin/true
+secrets: demo is not safe to use: $T/demo/env.sh is mode 644; make it private with: chmod 600 $T/demo/env.sh
+[exit 125]
+```
+
+| Code | Meaning |
+|------|---------|
+| 0 | Done; for `check`, every needed name set and nothing unsafe |
+| 1 | `check`: a name empty, or a `--need` name in no set |
+| 2 | Bad arguments; no root anywhere; for `set`, no terminal and no `--stdin`, or an empty value, or one holding a line break or a NUL (nothing changed) |
+| 3 | A set or the root is not there; `env.sh` cannot be read, is not UTF-8, or holds a line it cannot read (named by number); `set` could not write (`env.sh` is as it was) |
+| 4 | `init`: the set exists; `set`: the set has no such name and `--add` was not given |
+| 6 | `check`: every name set, but the folder or file is open to others, or inside git |
+| the command's own | `run`: COMMAND's exit code, or 128+N if signal N ended it |
+| 125 | `run`, its own refusal: a set missing or unsafe, a `--need` name empty or in no set, a name in two sets, bad arguments (125, as `env` uses it, so it rarely meets a command's own code) |
+| 126 | `run`: COMMAND cannot be run (not executable) |
+| 127 | `run`: COMMAND not found |
+
+**For a Claude session.** It may run `check`, `list` and `run`, and `init` when asked to make a set.
+It never runs `set` with a value, never opens, `cat`s or `echo`s `env.sh` or a variable, and never
+puts a value in a message, a file name or an argument. When a value is wanted, it tells the person
+the line to type: `secrets set SET NAME`. When a command fails to sign in, `secrets check SET --need
+NAME ...` says whether a value is missing or empty, without showing it. Masking is on unless
+`--no-mask` is given, and a session leaves it on.
+
+**For the person who keeps the secrets.** Make a set once: `mkdir -m 700 ~/projects/secrets` (the
+first time only), then `secrets init example --names EXAMPLE_ID EXAMPLE_TOKEN`. Put a value in:
+`secrets set example EXAMPLE_TOKEN`, then paste it at the prompt; nothing is shown. Renew a
+value: the same `set` with the new one; the old one is gone from the file. Revoke a value: revoke it
+at the service first (the old value then stops working wherever a copy of it might be), then `set`
+the new value, or leave the old line until there is one. `secrets check example` shows where
+things stand.
+
+**In the Linux virtual machine or a Cowork session.** Connect the root, or just one set's folder,
+to the session. It then appears under `$HOME/mnt/`: use `--root $HOME/mnt/secrets`, or `--set-dir
+$HOME/mnt/google` for one set, or `SECRETS_ROOT=~/mnt/secrets` in that machine's
+`~/.lobster-tools.conf`. It needs nothing but Python 3.9 or later, so the machine's 3.10 will do. The
+connected folder keeps the Mac's modes, so `check` says the same there.
+
+**Moving a claw over.** A claw's commands change nothing: they read their variables from the
+environment, as before. In its README, `set -a; . PATH/env.sh; set +a; COMMAND ...` becomes `secrets
+run SET -- COMMAND ...`, with `--need NAME ...` for the names the command must have. Its sign-in
+command writes to the set's `env.sh` with the `--env-file` flag it already has (`ROOT/SET/env.sh`),
+or later through `secrets set SET NAME --stdin`. An existing folder becomes a set with no value
+retyped, because the file format is the same: `mv OLD-FOLDER ROOT/SET`, then `secrets check SET`.
+Until it is moved, every verb works on it where it is with `--set-dir OLD-FOLDER`, and the old `set
+-a; .` way still works on either. If two old folders hold the same names, choose one before moving
+it; `secrets` does not say whether two values are the same.
+
 ## Errors and exit codes
 
 Every failure is one line on standard error, `lobster-mail <verb>: <what happened> (<what to do>)`,
@@ -1305,7 +1441,7 @@ was changed after it was sent, so ask the sender.
 ```bash
 cd lobster-tools
 python3 -m venv .venv && .venv/bin/pip install -r requirements-dev.txt
-.venv/bin/pytest                # 707 tests, 98% coverage, about 45 seconds (21 November 2026)
+.venv/bin/pytest                # 807 tests, 98% coverage, about 46 seconds (22 November 2026)
 .venv/bin/ruff check .          # lint
 ```
 
@@ -1318,14 +1454,17 @@ stand-in `tests/stubs/python3` (a `/bin/sh` script, never written by a test) ont
 fakes `-m venv`, the import check and `-m pip install` and records every call; fetch-deb's link
 `tests/stubs/apt-get` and `tests/stubs/dpkg-deb` the same way; job's tests run the stand-in job
 `tests/stubs/jobstub` (a `/bin/sh` script, by its full path) and start `job run` as a program in a
-few, and wait-for-file's and job wait's replace the clock and the sleep. Tests pin the
+few; secrets' tests run the stand-in `tests/stubs/secretstub` the same way, against a scratch root
+with every name and value invented, and wait-for-file's and job wait's replace the clock and the sleep. Tests pin the
 architectural line: the source names no delete, and no way of running a program but `subprocess`
 inside `run_git` in `check.py`, which takes only reading git verbs (`stash` only as `stash list`),
 and inside `run_program` in `prepare.py`, which takes only `python3 -m venv
 --system-site-packages DIR`, `python -m pip install -r FILE` and an import line of module names,
 and inside `run_program` in `fetchdeb.py`, which takes only `apt-get download PACKAGE...` and
 `dpkg-deb -x FILE DIR`, and inside `run_job` in `job.py`, which starts the commands a person queued,
-never through a shell (and no signal sent but from `alive` and `stop_job` there);
+never through a shell (and no signal sent but from `alive` and `stop_job` there), and inside
+`run_command` in `secrets.py`, which starts the command a person gives `secrets run`, never through
+a shell;
 every verb leaves the same set
 of message files (bytes and names) or adds exactly the two it says; session-check leaves the
 project and the mail root byte for byte the same and gives git only reading verbs; a hostile body
@@ -1380,6 +1519,14 @@ And (21 November 2026) `job` and `wait-for-file` in a scratch folder with real `
 space, a `$` and quotes in its name, with `--stable`, `--glob` and a timeout. The output is in
 "`job`" and "`wait-for-file`" above. The first run found a race: `job wait` started just after a
 background `job run` said there was no runner; it now gives a runner five seconds.
+And (22 November 2026) `secrets` on the Mac in a scratch root, with invented names and value, real
+`/usr/bin/printenv`, `/bin/sh` and git: each verb, masking on both streams and `--no-mask`, the
+refusals (no terminal and no `--stdin`, a needed name missing, a command not found, a file at 644, a
+set inside a git working tree), and the old `set -a; .` still reading the same value. Afterwards the
+value was in no file but `env.sh`. The output is in "`secrets`" above. Not checked: `set` asking at
+a real terminal (the tests replace the prompt), and a run in the Linux virtual machine. Three lines
+of `secrets.py` are not reached by the tests: the prompt itself (`getpass`), and the two lines that
+go on waiting for the command when Ctrl-C is pressed.
 
 ## Known limitations and non-goals
 
@@ -1400,6 +1547,10 @@ background `job run` said there was no runner; it now gives a runner five second
   runner that stopped is known by its process id, which the system could in time give to another
   process. One queue serves one project; a queue is not shared between projects. Not for a desktop
   app session's shell, whose calls are cut off.
+- `secrets` keeps values in a file, not the macOS keychain, so the same set serves the Linux virtual
+  machine. Masking catches a value only as it is stored, and only values of 8 characters or more. It
+  does not move existing folders, merge two sets, change a claw's sign-in, or say whether two sets
+  hold the same value.
 
 ## Notes for users
 
@@ -1510,6 +1661,11 @@ background `job run` said there was no runner; it now gives a runner five second
   `job wait` to be told when one ends) and `wait-for-file` (wait until a file appears, and with
   `--stable` until it stops growing); see "`job`" and "`wait-for-file`". For a session on the Mac, in
   place of a waiting loop typed at the prompt. Nothing that exists changes.
+- 22 November 2026: an eighth command, `secrets`: named sets of secrets under one root
+  (`SECRETS_ROOT` in `~/.lobster-tools.conf`), `set` without showing the value, `check` without
+  showing any, and `run SET -- COMMAND` in place of `set -a; . env.sh; set +a`, masking values in
+  the output unless `--no-mask`; see "`secrets`". Nothing that exists changes; an existing
+  `…-secrets/env.sh` works as it is with `--set-dir`.
 
 ## Contributing
 
