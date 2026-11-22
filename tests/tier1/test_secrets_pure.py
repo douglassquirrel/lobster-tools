@@ -110,3 +110,45 @@ def test_holds_back_only_what_could_start_a_value():
 def test_masks_a_non_ascii_value_as_its_bytes():
     value = "clé-très-secrète"
     assert masked([value], [value.encode()[:5], value.encode()[5:] + b"!"]) == b"[secret]!"
+
+
+class Child:
+    def __init__(self):
+        self.sent = []
+
+    def send_signal(self, signum):
+        self.sent.append(signum)
+
+
+def test_relay_passes_each_of_the_three_signals_on_when_not_in_a_terminals_foreground():
+    import signal
+    relay, child = secrets.Relay(lambda: False), Child()
+    relay.attach(child)
+    for each in (signal.SIGTERM, signal.SIGINT, signal.SIGHUP):
+        relay.handle(each, None)
+    assert child.sent == [signal.SIGTERM, signal.SIGINT, signal.SIGHUP]
+
+
+def test_relay_in_a_terminals_foreground_passes_only_sigterm_on():
+    import signal
+    relay, child = secrets.Relay(lambda: True), Child()
+    relay.attach(child)
+    for each in (signal.SIGINT, signal.SIGHUP, signal.SIGTERM):
+        relay.handle(each, None)
+    assert child.sent == [signal.SIGTERM]
+
+
+def test_relay_keeps_a_signal_that_comes_before_the_command_and_sends_it_once_it_exists():
+    import signal
+    relay, child = secrets.Relay(lambda: False), Child()
+    relay.handle(signal.SIGTERM, None)
+    assert child.sent == []
+    relay.attach(child)
+    assert child.sent == [signal.SIGTERM]
+    relay.handle(signal.SIGHUP, None)
+    assert child.sent == [signal.SIGTERM, signal.SIGHUP]
+
+
+def test_in_foreground_is_false_with_no_terminal_to_open(monkeypatch, tmp_path):
+    monkeypatch.setattr(secrets, "TTY", str(tmp_path / "no-terminal"))
+    assert secrets.in_foreground() is False

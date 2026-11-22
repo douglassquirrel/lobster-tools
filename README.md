@@ -1325,7 +1325,13 @@ No value is ever printed, logged, put in an argument list or written anywhere bu
   between them. A value printed changed (URL-encoded, split, base64) is not caught: masking is a
   safety net, not a guarantee. Shorter values are not masked, because masking them would garble
   ordinary output. `--no-mask` gives the command the terminal as it is, for a person at the
-  keyboard. A sign-in that prints an address holding the client id needs it, for one.
+  keyboard. A sign-in that prints an address holding the client id needs it, for one. **A stop sent
+  to `secrets` reaches the command:** SIGTERM, SIGINT and SIGHUP sent to the `secrets` process (a
+  `kill` by its pid, a supervisor that stops only what it started) are passed on to the command, and
+  `secrets` waits for it to end and exits with its code (143, 130, 129 if the signal ended it). A
+  command that ignores the signal is waited for. In the foreground of a terminal, Ctrl-C and a
+  hangup are not passed on, since the terminal has sent them to the command already; so there a
+  `kill -INT` aimed at `secrets` alone does not reach the command (use `kill -TERM`).
 - **`list`** prints each set under the root and the names it holds, with `(unsafe)` after one whose
   modes or place are wrong. A set it cannot read shows the line number at fault.
 
@@ -1448,7 +1454,7 @@ was changed after it was sent, so ask the sender.
 ```bash
 cd lobster-tools
 python3 -m venv .venv && .venv/bin/pip install -r requirements-dev.txt
-.venv/bin/pytest                # 819 tests, 98% coverage, about 49-58 seconds (22 November 2026)
+.venv/bin/pytest                # 827 tests, 98% coverage, about 48-52 seconds (22 November 2026)
 .venv/bin/ruff check .          # lint
 ```
 
@@ -1530,11 +1536,18 @@ And (22 November 2026) `secrets` on the Mac in a scratch root, with invented nam
 `/usr/bin/printenv`, `/bin/sh` and git: each verb, masking on both streams and `--no-mask`, the
 refusals (no terminal and no `--stdin`, a needed name missing, a command not found, a file at 644, a
 set inside a git working tree), and the old `set -a; .` still reading the same value. Afterwards the
-value was in no file but `env.sh`. The output is in "`secrets`" above. Not checked: `set` asking at
-a real terminal (the tests replace the prompt), and a run in the Linux virtual machine. Since 22
-November 2026 the prompt is tested through a pseudo-terminal (`tests/tier2/test_secrets_prompt.py`):
-a 2,000-character value, Backspace, Ctrl-U, Ctrl-C, the terminal put back. Not reached by the
-tests: the two lines that go on waiting for the command when Ctrl-C is pressed in `run`.
+value was in no file but `env.sh`. The output is in "`secrets`" above. Later the same day, at a real
+pseudo-terminal (`script`), `secrets set` took an invented 1,400-character value whole, where the
+earlier prompt stuck after 1,024; and `secrets run` with a real `/bin/sh` command passed a SIGTERM
+sent to `secrets` alone on to the command (exit 143, its masked output printed), where before the
+command was left running. Not checked: a paste by a person in a Terminal window, and the Linux
+virtual machine. The prompt is tested through a pseudo-terminal (`tests/tier2/test_secrets_prompt.py`):
+a 2,000-character value, Backspace, Ctrl-U, Ctrl-C, the terminal put back. Passing a stop on is
+tested with `secrets` started as a program (`tests/tier2/test_secrets_signals.py`): in a session of
+its own for SIGTERM, SIGINT, SIGHUP and a command that ignores SIGTERM, and in a terminal's
+foreground (`pty.fork`) for `kill -INT` and a real Ctrl-C. Not reached by the measured tests: the
+lines of `in_foreground` that ask the terminal which group is in front, which run only in `secrets`
+started under a pseudo-terminal, where coverage does not follow.
 
 ## Known limitations and non-goals
 
@@ -1678,6 +1691,9 @@ tests: the two lines that go on waiting for the command when Ctrl-C is pressed i
   characters, the terminal's line limit), and `set` says how long the value is, and for a replaced
   value how long the old one was: `DROPBOX_TOKEN set in dropbox (replaced, 1373 characters; was
   1370)`. A new `--min-length N` refuses a shorter value. Ctrl-C at the prompt exits 130.
+- 22 November 2026: `secrets run` passes SIGTERM, SIGINT and SIGHUP sent to it on to the command and
+  waits for it, so stopping `secrets` stops the command (before, the command was left running). In a
+  terminal's foreground, Ctrl-C and a hangup are not passed on a second time.
 
 ## Contributing
 

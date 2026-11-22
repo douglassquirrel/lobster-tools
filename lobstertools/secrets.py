@@ -10,6 +10,7 @@ import argparse
 import collections
 import os
 import re
+import signal
 import stat
 import subprocess
 import sys
@@ -478,10 +479,64 @@ def pump(stream, fd, masker):
             return
 
 
-def run_command(argv, env, values):
+PASSED_ON = (signal.SIGTERM, signal.SIGINT, signal.SIGHUP)
+
+
+def in_foreground():
+    """True if this process is in the foreground group of its terminal, so that the terminal's
+    Ctrl-C and hangup reach the command too."""
+    try:
+        fd = os.open(TTY, os.O_RDWR | os.O_NOCTTY)
+    except OSError:
+        return False
+    try:
+        return os.tcgetpgrp(fd) == os.getpgrp()
+    except OSError:
+        return False
+    finally:
+        os.close(fd)
+
+
+class Relay:
+    """Passes a stop sent to secrets on to the command it runs: SIGTERM always, SIGINT and SIGHUP
+    only when not in a terminal's foreground (the terminal has sent those to the command already).
+    A signal that comes before the command exists is sent as soon as it does."""
+
+    def __init__(self, foreground):
+        self.foreground, self.child, self.waiting = foreground, None, []
+
+    def handle(self, signum, frame):
+        if signum != signal.SIGTERM and self.foreground():
+            return
+        if self.child is None:
+            self.waiting.append(signum)
+        else:
+            self.child.send_signal(signum)
+
+    def attach(self, child):
+        self.child = child
+        for signum in self.waiting:
+            child.send_signal(signum)
+        self.waiting = []
+
+
+def run_relayed(argv, env, values):
+    """run_command, with SIGTERM, SIGINT and SIGHUP passed on to the command (Relay) from just
+    before it starts until it has ended; the handlers are put back afterwards."""
+    relay = Relay(in_foreground)
+    before = {signum: signal.signal(signum, relay.handle) for signum in PASSED_ON}
+    try:
+        return run_command(argv, env, values, relay)
+    finally:
+        for signum, handler in before.items():
+            signal.signal(signum, handler)
+
+
+def run_command(argv, env, values, relay):
     """The one place secrets starts a program: ARGV as given, never through a shell, with ENV.
     With VALUES (bytes), its two output streams come through pumps that mask them; with None, it
-    has the terminal as it is. Returns its exit code, or 128+N if signal N ended it."""
+    has the terminal as it is. RELAY is told the child once it exists. Returns its exit code, or
+    128+N if signal N ended it."""
     sys.stdout.flush()
     sys.stderr.flush()
     piped = values is not None
@@ -493,18 +548,14 @@ def run_command(argv, env, values):
         raise Refusal(RUN_NOT_FOUND, "%s: command not found" % argv[0])
     except OSError as error:
         raise Refusal(RUN_CANNOT, "%s cannot be run: %s" % (argv[0], error.strerror))
+    relay.attach(child)
     pumps = []
     if piped:
         pumps = [threading.Thread(target=pump, args=(child.stdout, 1, Masker(values))),
                  threading.Thread(target=pump, args=(child.stderr, 2, Masker(values)))]
         for each in pumps:
             each.start()
-    while True:
-        try:
-            code = child.wait()
-            break
-        except KeyboardInterrupt:
-            continue
+    code = child.wait()
     for each in pumps:
         each.join()
     if piped:
@@ -537,7 +588,7 @@ def do_run(args, stdin, command):
     env = dict(os.environ)
     env.update(merged)
     values = None if args.no_mask else [v.encode("utf-8") for v in merged.values()]
-    return run_command(command, env, values)
+    return run_relayed(command, env, values)
 
 
 def at_least_one(text):
