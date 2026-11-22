@@ -1266,7 +1266,7 @@ $S/drop zone/take $1 'final'.wav
 
 ```
 secrets init  SET --names NAME [NAME ...] [--dry-run]
-secrets set   SET NAME [--add] [--stdin] [--dry-run]
+secrets set   SET NAME [--add] [--stdin] [--min-length N] [--dry-run]
 secrets check SET [SET ...] [--need NAME ...]
 secrets run   SET [SET ...] [--need NAME ...] [--no-mask] -- COMMAND [ARG ...]
 secrets list
@@ -1296,12 +1296,18 @@ No value is ever printed, logged, put in an argument list or written anywhere bu
   refuses a set that exists (exit 4) and never writes over a file. The root must already exist; if
   it does not, it says so with the `mkdir -m 700` line to make it.
 - **`set`** replaces one name's line, for a person at the keyboard. It asks for the value on the
-  terminal without echoing it. With `--stdin` it reads standard input to its end, less one final
+  terminal without echoing it, and takes a value of any length: a long token (a 1,400-character
+  OAuth token, say) can be pasted at the prompt, though the terminal's usual line mode stops at
+  1,024 characters. Return ends the value; Backspace takes back a character; Ctrl-U clears what
+  was typed; Ctrl-C stops with nothing changed (exit 130). With `--stdin` it reads standard input to its end, less one final
   newline, for a tool that hands it a value. With neither a terminal nor `--stdin` it refuses, so a
   stray pipe writes nothing. It refuses a name the set lacks unless given `--add`, and refuses an
   empty value or one holding a line break or a NUL. Every other line stays byte for byte, and the
   file keeps its mode. The new file is written in the set's folder and renamed over `env.sh`, so a
-  failed write leaves it as it was. It prints `NAME set in SET (it was empty | replaced | added)`.
+  failed write leaves it as it was. It prints how long the value is, in characters, and never the
+  value: `NAME set in SET (it was empty, 1373 characters)`, `(added, …)`, or `(replaced, 1373
+  characters; was 1370)`, so a short or cut-off paste shows at once. `--min-length N` refuses a
+  value of fewer than N characters and writes nothing.
 - **`check`** prints each name as `set` or `empty`, and each `--need` name that is in none of the
   sets as missing; never a value, a length or a hash. It also says when the folder or the file can
   be read by anyone but you, or when the folder sits inside a git working tree (found by looking for
@@ -1352,10 +1358,11 @@ secrets: demo is not safe to use: $T/demo/env.sh is mode 644; make it private wi
 |------|---------|
 | 0 | Done; for `check`, every needed name set and nothing unsafe |
 | 1 | `check`: a name empty, or a `--need` name in no set |
-| 2 | Bad arguments; no root anywhere; for `set`, no terminal and no `--stdin`, or an empty value, or one holding a line break or a NUL (nothing changed) |
+| 2 | Bad arguments; no root anywhere; for `set`, no terminal and no `--stdin`, or an empty value, one holding a line break or a NUL, one not UTF-8, or one shorter than `--min-length` (nothing changed) |
 | 3 | A set or the root is not there; `env.sh` cannot be read, is not UTF-8, or holds a line it cannot read (named by number); `set` could not write (`env.sh` is as it was) |
 | 4 | `init`: the set exists; `set`: the set has no such name and `--add` was not given |
 | 6 | `check`: every name set, but the folder or file is open to others, or inside git |
+| 130 | `set`: Ctrl-C at the prompt (nothing changed) |
 | the command's own | `run`: COMMAND's exit code, or 128+N if signal N ended it |
 | 125 | `run`, its own refusal: a set missing or unsafe, a `--need` name empty or in no set, a name in two sets, bad arguments (125, as `env` uses it, so it rarely meets a command's own code) |
 | 126 | `run`: COMMAND cannot be run (not executable) |
@@ -1441,7 +1448,7 @@ was changed after it was sent, so ask the sender.
 ```bash
 cd lobster-tools
 python3 -m venv .venv && .venv/bin/pip install -r requirements-dev.txt
-.venv/bin/pytest                # 807 tests, 98% coverage, about 46 seconds (22 November 2026)
+.venv/bin/pytest                # 819 tests, 98% coverage, about 49-58 seconds (22 November 2026)
 .venv/bin/ruff check .          # lint
 ```
 
@@ -1524,9 +1531,10 @@ And (22 November 2026) `secrets` on the Mac in a scratch root, with invented nam
 refusals (no terminal and no `--stdin`, a needed name missing, a command not found, a file at 644, a
 set inside a git working tree), and the old `set -a; .` still reading the same value. Afterwards the
 value was in no file but `env.sh`. The output is in "`secrets`" above. Not checked: `set` asking at
-a real terminal (the tests replace the prompt), and a run in the Linux virtual machine. Three lines
-of `secrets.py` are not reached by the tests: the prompt itself (`getpass`), and the two lines that
-go on waiting for the command when Ctrl-C is pressed.
+a real terminal (the tests replace the prompt), and a run in the Linux virtual machine. Since 22
+November 2026 the prompt is tested through a pseudo-terminal (`tests/tier2/test_secrets_prompt.py`):
+a 2,000-character value, Backspace, Ctrl-U, Ctrl-C, the terminal put back. Not reached by the
+tests: the two lines that go on waiting for the command when Ctrl-C is pressed in `run`.
 
 ## Known limitations and non-goals
 
@@ -1666,6 +1674,10 @@ go on waiting for the command when Ctrl-C is pressed.
   showing any, and `run SET -- COMMAND` in place of `set -a; . env.sh; set +a`, masking values in
   the output unless `--no-mask`; see "`secrets`". Nothing that exists changes; an existing
   `…-secrets/env.sh` works as it is with `--set-dir`.
+- 22 November 2026: `secrets set`'s prompt takes a value of any length (it stopped at 1,024
+  characters, the terminal's line limit), and `set` says how long the value is, and for a replaced
+  value how long the old one was: `DROPBOX_TOKEN set in dropbox (replaced, 1373 characters; was
+  1370)`. A new `--min-length N` refuses a shorter value. Ctrl-C at the prompt exits 130.
 
 ## Contributing
 

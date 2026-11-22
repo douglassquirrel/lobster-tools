@@ -22,7 +22,7 @@ def test_set_asks_on_the_terminal_and_replaces_only_that_line(vault):
     code, out, err = vault.run("set", "google", "G_TOKEN", *vault.r, tty=True,
                                ask=asker(HOSTILE, seen))
     assert (code, err) == (0, "")
-    assert out == "G_TOKEN set in google (it was empty)\n"
+    assert out == "G_TOKEN set in google (it was empty, %d characters)\n" % len(HOSTILE)
     assert seen == ["Value for G_TOKEN in google (not shown): "]
     after = (folder / "env.sh").read_text(encoding="utf-8")
     assert after == BEFORE.replace("export G_TOKEN=''\n", secrets.env_line("G_TOKEN", HOSTILE))
@@ -34,7 +34,7 @@ def test_set_says_replaced_when_there_was_a_value(vault):
     vault.make("google", BEFORE)
     code, out, _err = vault.run("set", "google", "G_ID", *vault.r, tty=True,
                                ask=asker("new-value", []))
-    assert (code, out) == (0, "G_ID set in google (replaced)\n")
+    assert (code, out) == (0, "G_ID set in google (replaced, 9 characters; was 7)\n")
 
 
 def test_set_keeps_a_mode_it_finds_and_says_it_is_unsafe(vault):
@@ -73,7 +73,7 @@ def test_set_refuses_a_name_the_set_lacks_unless_add(vault):
     assert vault.files() == before
     code, out, err = vault.run("set", "google", "NEW_ONE", "--stdin", "--add", *vault.r,
                                stdin=b"v1")
-    assert (code, out) == (0, "NEW_ONE set in google (added)\n")
+    assert (code, out) == (0, "NEW_ONE set in google (added, 2 characters)\n")
     assert (folder / "env.sh").read_text() == BEFORE + "export NEW_ONE='v1'\n"
 
 
@@ -143,3 +143,44 @@ def test_a_shell_reads_back_exactly_what_set_wrote(vault):
     shown = subprocess.run(["/bin/sh", "-c", '. "$1"; printf %s "$G_TOKEN"', "sh",
                             str(folder / "env.sh")], capture_output=True, check=True)
     assert shown.stdout.decode("utf-8") == HOSTILE
+
+
+def test_set_says_how_long_an_added_value_is_in_characters_not_bytes(vault):
+    vault.make("google", BEFORE)
+    code, out, _err = vault.run("set", "google", "G_NEW", "--add", *vault.r, tty=True,
+                               ask=asker("caf\u00e9-\u00e9t\u00e9", []))
+    assert (code, out) == (0, "G_NEW set in google (added, 8 characters)\n")
+
+
+def test_set_says_the_lengths_for_a_value_read_with_stdin(vault):
+    vault.make("google", BEFORE)
+    code, out, _err = vault.run("set", "google", "G_ID", "--stdin", *vault.r,
+                               stdin=b"x" * 100 + b"\n")
+    assert (code, out) == (0, "G_ID set in google (replaced, 100 characters; was 7)\n")
+
+
+def test_set_min_length_refuses_a_shorter_value_and_writes_nothing(vault):
+    vault.make("google", BEFORE)
+    before = vault.files()
+    code, out, err = vault.run("set", "google", "G_ID", "--stdin", "--min-length", "1000",
+                               *vault.r, stdin=b"x" * 100)
+    assert (code, out) == (2, "")
+    assert err == ("secrets: the value is 100 characters, fewer than --min-length 1000; "
+                   "nothing changed\n")
+    assert vault.files() == before
+
+
+def test_set_min_length_takes_a_value_of_exactly_that_length(vault):
+    vault.make("google", BEFORE)
+    code, out, _err = vault.run("set", "google", "G_ID", "--min-length", "5", *vault.r,
+                               tty=True, ask=asker("12345", []))
+    assert (code, out) == (0, "G_ID set in google (replaced, 5 characters; was 7)\n")
+
+
+def test_set_min_length_must_be_a_whole_number_of_at_least_one(vault):
+    vault.make("google", BEFORE)
+    for bad in ("0", "-3", "many"):
+        code, out, err = vault.run("set", "google", "G_ID", "--stdin", "--min-length", bad,
+                                   *vault.r, stdin=b"value")
+        assert (code, out) == (2, "")
+        assert "--min-length" in err and "at least 1" in err, err

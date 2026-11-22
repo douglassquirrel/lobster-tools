@@ -8,12 +8,12 @@ list or written anywhere but the set's env.sh.
 """
 import argparse
 import collections
-import getpass
 import os
 import re
 import stat
 import subprocess
 import sys
+import termios
 import threading
 
 from lobstertools import config
@@ -22,6 +22,9 @@ PROG = "secrets"
 MASK = b"[secret]"
 MASK_MIN = 8
 EXIT_OK, EXIT_EMPTY, EXIT_USAGE, EXIT_NO_SET, EXIT_EXISTS, EXIT_UNSAFE = 0, 1, 2, 3, 4, 6
+EXIT_STOPPED = 130
+TTY = "/dev/tty"
+NO_TERMINAL = "no terminal to ask on; give --stdin to read the value from standard input"
 RUN_OWN, RUN_CANNOT, RUN_NOT_FOUND = 125, 126, 127
 
 NAME = re.compile(r"[A-Z_][A-Z0-9_]*\Z")
@@ -324,8 +327,57 @@ def do_list(args, stdin):
 
 
 def ask(prompt):
-    """A value typed at the terminal, not echoed."""
-    return getpass.getpass(prompt)
+    """A value typed at the terminal, not echoed, of any length."""
+    try:
+        fd = os.open(TTY, os.O_RDWR | os.O_NOCTTY)
+    except OSError:
+        raise Refusal(EXIT_USAGE, NO_TERMINAL)
+    try:
+        return read_hidden(fd, prompt)
+    finally:
+        os.close(fd)
+
+
+def read_hidden(fd, prompt):
+    """Write PROMPT to the terminal FD and read a line from it, not echoed, with the terminal out
+    of its line mode, so the value has no length limit (macOS takes 1,024 characters on a line).
+    Return or newline or Ctrl-D ends it; Backspace takes back one character, Ctrl-U clears, Ctrl-C
+    stops. The terminal's settings are put back however it ends."""
+    saved = termios.tcgetattr(fd)
+    quiet = list(saved)
+    quiet[3] &= ~(termios.ICANON | termios.ECHO | termios.ISIG | termios.IEXTEN)
+    quiet[6] = list(saved[6])
+    quiet[6][termios.VMIN], quiet[6][termios.VTIME] = 1, 0
+    typed = bytearray()
+    try:
+        termios.tcsetattr(fd, termios.TCSAFLUSH, quiet)
+        os.write(fd, prompt.encode("utf-8"))
+        while True:
+            chunk = os.read(fd, 4096)
+            for byte in chunk:
+                if byte in (0x0A, 0x0D, 0x04):
+                    chunk = b""
+                    break
+                if byte == 0x03:
+                    raise Refusal(EXIT_STOPPED, "stopped at the prompt; nothing changed")
+                if byte in (0x7F, 0x08):
+                    while typed and typed[-1] & 0xC0 == 0x80:
+                        typed.pop()
+                    if typed:
+                        typed.pop()
+                elif byte == 0x15:
+                    typed.clear()
+                else:
+                    typed.append(byte)
+            if not chunk:
+                break
+    finally:
+        termios.tcsetattr(fd, termios.TCSANOW, saved)
+        os.write(fd, b"\n")
+    try:
+        return typed.decode("utf-8")
+    except UnicodeDecodeError:
+        raise Refusal(EXIT_USAGE, "the value is not UTF-8 text; nothing changed")
 
 
 def read_value(args, stdin, label):
@@ -340,8 +392,7 @@ def read_value(args, stdin, label):
     elif stdin.isatty():
         value = ask("Value for %s in %s (not shown): " % (args.name, label))
     else:
-        raise Refusal(EXIT_USAGE, "no terminal to ask on; give --stdin to read the value from "
-                                  "standard input")
+        raise Refusal(EXIT_USAGE, NO_TERMINAL)
     if not value:
         raise Refusal(EXIT_USAGE, "the value is empty; nothing changed")
     if any(ch in value for ch in "\n\r\0"):
@@ -385,6 +436,9 @@ def do_set(args, stdin):
                                           "to add" if was == "added" else "to replace"))
         return EXIT_OK
     value = read_value(args, stdin, target.label)
+    if args.min_length and len(value) < args.min_length:
+        raise Refusal(EXIT_USAGE, "the value is %d characters, fewer than --min-length %d; "
+                                  "nothing changed" % (len(value), args.min_length))
     line = env_line(args.name, value)
     if args.name in held:
         text = "".join(line if e.name == args.name else e.raw for e in entries)
@@ -394,7 +448,10 @@ def do_set(args, stdin):
             text += "\n"
         text += line
     write_env(target, text)
-    print("%s set in %s (%s)" % (args.name, target.label, was))
+    said = "%s, %d characters" % (was, len(value))
+    if was == "replaced":
+        said += "; was %d" % len(held[args.name].value)
+    print("%s set in %s (%s)" % (args.name, target.label, said))
     for problem in target.unsafe():
         print("unsafe: %s" % problem)
     return EXIT_OK
@@ -483,6 +540,17 @@ def do_run(args, stdin, command):
     return run_command(command, env, values)
 
 
+def at_least_one(text):
+    """--min-length's N: a whole number of at least 1."""
+    try:
+        number = int(text)
+    except ValueError:
+        number = 0
+    if number < 1:
+        raise argparse.ArgumentTypeError("%r is not a whole number of at least 1" % text)
+    return number
+
+
 def parse(argv):
     parser = argparse.ArgumentParser(
         prog=PROG,
@@ -516,6 +584,8 @@ def parse(argv):
     put.add_argument("--stdin", action="store_true",
                      help="read the value from standard input to its end (one final newline "
                           "dropped), for a tool such as a sign-in command")
+    put.add_argument("--min-length", type=at_least_one, metavar="N",
+                     help="refuse a value of fewer than N characters, writing nothing")
     put.add_argument("--dry-run", action="store_true", help="check the set and name; ask nothing")
 
     check = verbs.add_parser("check", parents=[where], help="say which names are set (reads only)",
