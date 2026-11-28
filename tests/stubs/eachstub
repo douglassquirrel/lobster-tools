@@ -1,0 +1,26 @@
+#!/bin/sh
+# Stand-in for the tool each runs, in each's tests (tests/tier2/test_each*.py). Linked onto a test's
+# PATH under a tool's name (archive-ask); never written by a test. Each run is numbered N from 1:
+# appends "ran N" to $EACHSTUB_DIR/log; writes its arguments, each followed by a NUL, to argv-N and
+# what it read on standard input to stdin-N; prints "out N" and, on stderr, "err N". Then, if hold-N
+# exists, touches held-N and waits (a TERM is logged as "term N" and ends it with 143, an INT as
+# "int N" with 130) until go-N
+# does; if kill-N exists, kills itself with signal 9; exits with the number in exit-N, else 0.
+d=$EACHSTUB_DIR
+echo x >> "$d/count"
+n=$(wc -l < "$d/count" | tr -d ' ')
+echo "ran $n" >> "$d/log"
+: > "$d/argv-$n"
+for arg in "$@"; do printf '%s\0' "$arg" >> "$d/argv-$n"; done
+cat > "$d/stdin-$n"
+echo "out $n"
+echo "err $n" >&2
+if [ -f "$d/hold-$n" ]; then
+    trap 'echo "term $n" >> "$d/log"; exit 143' TERM
+    trap 'echo "int $n" >> "$d/log"; exit 130' INT
+    : > "$d/held-$n"
+    while [ ! -f "$d/go-$n" ]; do sleep 0.02; done
+fi
+if [ -f "$d/kill-$n" ]; then kill -9 $$; fi
+if [ -f "$d/exit-$n" ]; then exit "$(cat "$d/exit-$n")"; fi
+exit 0

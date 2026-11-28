@@ -96,4 +96,5 @@ def every_file(root):
     return found
 
 
+from each_helpers import bench, eachstub_is_never_written_over  # noqa: F401  (each's fixtures)
 from request_helpers import world  # noqa: F401  (the request tests' scratch world)

@@ -52,6 +52,11 @@ under one root; `secrets set` puts a value in without showing it, `secrets check
 are set or empty without showing any, and `secrets run SET -- COMMAND` runs a command with that set's
 variables, masking any value it prints. No value is ever printed.
 
+The ninth is **`each`**, which runs one command over a list of items, one at a time, never through a
+shell: `each 2026-11-20 2026-11-21 -- archive-ask --date={}`, or `--from FILE` for a list in a file.
+It stops at the first failure unless `--go-on`, and refuses a shell or an interpreter as the command,
+so a session that must not type a loop has a lawful way to do the same work.
+
 ## Requirements
 
 - macOS with the command-line developer tools, which give `/usr/bin/python3` (Python 3.9 or
@@ -1405,6 +1410,79 @@ Until it is moved, every verb works on it where it is with `--set-dir OLD-FOLDER
 -a; .` way still works on either. If two old folders hold the same names, choose one before moving
 it; `secrets` does not say whether two values are the same.
 
+### `each`: run one command over a list, one item at a time
+
+```
+each [--go-on] [--dry-run] ITEM ... -- COMMAND [ARG ...]
+each [--go-on] [--dry-run] --from FILE|- -- COMMAND [ARG ...]
+each --help
+```
+
+Runs COMMAND once for each item, one at a time, in the order given, and says how each run ended.
+Every `{}` in COMMAND's arguments is replaced by the item, wherever it stands (`--date={}`,
+`"take one/{}"`); with no `{}`, the item is added as the last argument. The items come after `each`,
+or one per line from `--from FILE` (`-` for standard input): blank lines are skipped, a final line
+without a newline is taken, a carriage return before a newline is dropped, and everything else is
+kept as it is, spaces, quotes and `$` included, and passed to the command as one argument.
+
+It is for a ganglion that must not type a loop: the command is run directly, never through a shell,
+and its standard input is empty, so it cannot eat the list. A shell or an interpreter as COMMAND
+(`sh`, `bash`, `zsh`, `python3`, `perl`, `osascript` and the like), or `env` or `xargs`, is refused
+before anything runs. It stops at the first failure unless `--go-on`. `--dry-run` prints each command
+line it would run and runs none. A SIGTERM, Ctrl-C or hangup sent to it reaches the command that is
+running, and nothing more is started. It writes nothing itself. Not in parallel.
+
+From the Tier 3 check (28 November 2026), on invented files in a scratch folder:
+
+```
+$ ls "take one" | each --from - -- wc -c "take one/{}"
+[1/2] wc -c 'take one/a $1.txt'
+       2 take one/a $1.txt
+exit 0
+[2/2] wc -c 'take one/b'"'"'q'"'"'.txt'
+       3 take one/b'q'.txt
+exit 0
+2 ran: 2 succeeded, 0 failed
+$ each --dry-run 2026-11-20 2026-11-21 -- date -j -f %Y-%m-%d {} +%A
+would run [1/2] date -j -f %Y-%m-%d 2026-11-20 +%A
+would run [2/2] date -j -f %Y-%m-%d 2026-11-21 +%A
+dry run: 2 would run, none run
+$ each 2026-11-20 nonsense 2026-11-22 -- date -j -f %Y-%m-%d {} +%A
+[1/3] date -j -f %Y-%m-%d 2026-11-20 +%A
+Friday
+exit 0
+[2/3] date -j -f %Y-%m-%d nonsense +%A
+Failed conversion of ``nonsense'' using format ``%Y-%m-%d''
+date: illegal time format
+exit 1
+stopped at the first failure: 2 of 3 ran (1 succeeded, 1 failed), 1 not run
+[exit 1]
+$ each --go-on 2026-11-20 nonsense 2026-11-22 -- date -j -f %Y-%m-%d {} +%A
+...
+3 ran: 2 succeeded, 1 failed
+[exit 1]
+$ each a -- python3 -c 1
+each: python3 refused: each runs one tool over a list, never a shell or an interpreter (a ganglion's rule 11). Name the tool itself after --; a job no tool does yet is a request to a claw.
+[exit 2]
+$ each 30 30 30 -- sleep          (and a SIGTERM sent to each a second later)
+[1/3] sleep 30
+ended by signal 15
+stopped by signal 15: 1 of 3 ran (0 succeeded, 1 failed), 2 not run
+[exit 143]
+```
+
+(`date`'s usage lines after "illegal time format" are left out above.) Each line `each` prints
+can be copied and run as it is. An item that starts with `-` cannot come before `--`, where it would
+be read as an option of `each`: put it in a `--from` file.
+
+| Code | Meaning |
+|------|---------|
+| 0 | Every item ran and succeeded; or no items in the list (`no items: nothing run`); or a dry run |
+| 1 | An item failed (exited non-zero, was ended by a signal, or could not be started): the first, or with `--go-on` any |
+| 2 | Refused: COMMAND is a shell, an interpreter, `env` or `xargs`; nothing after `--`; items both after `each` and in `--from`, or neither; a `--from` file that cannot be read |
+| 3 | COMMAND is not on `PATH` (or, given by its path, is not there or not executable) |
+| 128+N | Stopped by signal N (143 for SIGTERM, 130 for Ctrl-C): the running command was told, nothing more started |
+
 ## Errors and exit codes
 
 Every failure is one line on standard error, `lobster-mail <verb>: <what happened> (<what to do>)`,
@@ -1468,7 +1546,9 @@ fakes `-m venv`, the import check and `-m pip install` and records every call; f
 `tests/stubs/apt-get` and `tests/stubs/dpkg-deb` the same way; job's tests run the stand-in job
 `tests/stubs/jobstub` (a `/bin/sh` script, by its full path) and start `job run` as a program in a
 few; secrets' tests run the stand-in `tests/stubs/secretstub` the same way, against a scratch root
-with every name and value invented, and wait-for-file's and job wait's replace the clock and the sleep. Tests pin the
+with every name and value invented; each's tests link the stand-in `tests/stubs/eachstub` (a
+`/bin/sh` script that records its arguments and standard input, fails, is killed or holds on
+demand) onto `PATH` as `archive-ask`, and start `each` as a program in a few; and wait-for-file's and job wait's replace the clock and the sleep. Tests pin the
 architectural line: the source names no delete, and no way of running a program but `subprocess`
 inside `run_git` in `check.py`, which takes only reading git verbs (`stash` only as `stash list`),
 and inside `run_program` in `prepare.py`, which takes only `python3 -m venv
@@ -1477,7 +1557,8 @@ and inside `run_program` in `fetchdeb.py`, which takes only `apt-get download PA
 `dpkg-deb -x FILE DIR`, and inside `run_job` in `job.py`, which starts the commands a person queued,
 never through a shell (and no signal sent but from `alive` and `stop_job` there), and inside
 `run_command` in `secrets.py`, which starts the command a person gives `secrets run`, never through
-a shell;
+a shell, and inside `run_item` in `each.py`, which starts the command a person gives `each`, never
+through a shell;
 every verb leaves the same set
 of message files (bytes and names) or adds exactly the two it says; session-check leaves the
 project and the mail root byte for byte the same and gives git only reading verbs; a hostile body
@@ -1572,6 +1653,9 @@ started under a pseudo-terminal, where coverage does not follow.
   machine. Masking catches a value only as it is stored, and only values of 8 characters or more. It
   does not move existing folders, merge two sets, change a claw's sign-in, or say whether two sets
   hold the same value.
+- `each` runs one item at a time, never in parallel, and keeps no record of a run: what it printed
+  is the record. It cannot be given an item that starts with `-` before `--`; such an item goes in a
+  `--from` file.
 
 ## Notes for users
 
@@ -1694,6 +1778,9 @@ started under a pseudo-terminal, where coverage does not follow.
 - 22 November 2026: `secrets run` passes SIGTERM, SIGINT and SIGHUP sent to it on to the command and
   waits for it, so stopping `secrets` stops the command (before, the command was left running). In a
   terminal's foreground, Ctrl-C and a hangup are not passed on a second time.
+- 28 November 2026: a ninth command, `each`: one command over a list of items, one at a time,
+  `each ITEM ... -- COMMAND {}` or `each --from FILE -- COMMAND {}`, in place of a `for` loop typed at
+  the prompt; see "`each`". Nothing that exists changes.
 
 ## Contributing
 
