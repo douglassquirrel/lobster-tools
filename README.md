@@ -57,6 +57,12 @@ shell: `each 2026-11-20 2026-11-21 -- archive-ask --date={}`, or `--from FILE` f
 It stops at the first failure unless `--go-on`, and refuses a shell or an interpreter as the command,
 so a session that must not type a loop has a lawful way to do the same work.
 
+The tenth is **`script-guard`**, a Claude Code `PreToolUse` hook that reads each shell command before
+it runs and refuses what the project's kind forbids: in a ganglion, loops, `sleep`, interpreters and
+scripts; in a claw, inline programs and scripts run from a temporary folder. It reads the command as
+the shell would, so a commit message or a heredoc written to a file is never taken for a loop, and
+every refusal is logged where the conductor can read it.
+
 ## Requirements
 
 - macOS with the command-line developer tools, which give `/usr/bin/python3` (Python 3.9 or
@@ -1483,6 +1489,104 @@ be read as an option of `each`: put it in a `--from` file.
 | 3 | COMMAND is not on `PATH` (or, given by its path, is not there or not executable) |
 | 128+N | Stopped by signal N (143 for SIGTERM, 130 for Ctrl-C): the running command was told, nothing more started |
 
+### `script-guard`: refuse scripts and loops before they run
+
+```
+script-guard                      (as a Claude Code PreToolUse hook: the hook's JSON on standard input)
+script-guard --check COMMAND [--kind non-code|code] [--project DIR]
+script-guard --help
+```
+
+A hook for the `Bash` tool of a Claude Code session on the Mac. Before each shell command runs, it
+reads the command and the project's `lobster.conf`, and refuses (exit 2, with the reason on standard
+error, which the session sees) what that kind of project may not run:
+
+- **A ganglion** (`KIND=non-code`), which writes no scripts and types no loops (its rule 11): a loop
+  (`for`, `while`, `until`, `select`); `sleep`; an interpreter (`python`, `python3`, a venv's `python`,
+  `perl`, `ruby`, `node`, `osascript`, `php`, `lua`, `Rscript`) unless only asked `--version` or
+  `--help`; a shell given a script or standard input (`sh build.sh`, `bash <<EOF`, `… | zsh`); a shell
+  function definition; and a file starting with `#!` run by its path from the project folder or a
+  temporary folder. The message points to `each`, `job`, `wait-for-file` and file-tools' `measure`.
+- **A claw** (`KIND=code`), which keeps every script it runs (its rule 20): an interpreter given an
+  inline program (`python3 -c`, `python3 -`, a heredoc, here-string or pipe into an interpreter or a
+  shell, `perl -e`, `ruby -e`, `node -e`/`--eval`/`-p`, `osascript -e`, `php -r`, `lua -e`,
+  `Rscript -e`), and a script run, by an interpreter or by its path, from a temporary folder (`/tmp`,
+  `/var/folders`, which holds a session's scratchpad, or `$TMPDIR`) rather than `kept-scripts/`.
+  Loops, `sleep` and a kept file pass.
+- **Any other kind** (a feeler, the conductor), or a folder with no `lobster.conf`: nothing is refused.
+
+It reads the command as the shell would, with a reader of its own: quotes, backslashes, `;`, `&&`,
+`||`, `|`, `&`, newlines, `( )`, `{ }`, `$( )`, backticks, `<( )`, heredocs (quoted or not) and
+redirections. Only the words the shell would run as commands are judged, so a commit message, a
+quoted argument, a file named `while.txt`, `grep 'for '`, `sed`, `awk` and a heredoc's body written to
+a file all pass. What runs inside `$( )`, backticks, an unquoted heredoc's `$( )`, `bash -c '…'` and
+`eval` is judged by the same rules. Wrappers are looked through and the command they run is judged:
+`env`, `nohup`, `time`, `command` (not `command -v`), `exec`, `nice`, `timeout`, `caffeinate`, `xargs`,
+`find -exec`/`-execdir`/`-ok`, `job add --`, `each --` and `secrets run --`. `xargs` and `find -exec`
+running a command that passes are not loops.
+
+It never stops a session's work by a fault of its own: a command it cannot read (an unclosed quote,
+a `case`), input that is not the hook's JSON, an unreadable `lobster.conf` or any error of its own is
+allowed (exit 0) with one line on standard error. A tool other than `Bash`, or an empty command, is
+allowed without a word. A usage error is exit 0 too, so a hook set up wrongly cannot block every
+command. A start takes about 40 ms on the Mac.
+
+**Every refusal is logged**, one JSON line appended to `.script-guard/PROJECT.log` under the mail
+root (`LOBSTER_MAIL_ROOT`, or `MAIL_ROOT` in `~/.lobster-tools.conf`), so the conductor can see whether
+the guard is working and who slips: the time (UTC), the project (`SELF` in `lobster.conf`, else the
+folder's name), its kind, the session id, the helper agent's id and type when the hook is given them,
+the reason, and the first 300 characters of the command. The folder's name starts with a dot so
+that `lobster-mail duty status --all` passes over it. If the log cannot be written, the refusal
+still stands, with a line saying so. `--check` logs nothing. Nothing else is ever written.
+
+**Putting it in a project.** In the project's `.claude/settings.json`, beside the `SessionStart`
+hook (hooks are read when a session starts):
+
+```json
+"PreToolUse": [{"matcher": "Bash", "hooks": [{"type": "command",
+  "command": "$HOME/projects/code/lobster-tools-code/lobster-tools/script-guard"}]}]
+```
+
+A Claude session in the desktop app (Cowork) has no hooks, so there it does nothing. Installing it
+in the projects is the conductor's work, not this repository's.
+
+From the Tier 3 check (28 November 2026), on an invented ganglion `pond` with a scratch mail root,
+and `--check` by hand:
+
+```
+$ echo '{"session_id":"s-1","cwd":"…/pond","tool_name":"Bash","tool_input":{"command":"until [ -f done.txt ]; do sleep 30; done"}}' | script-guard
+script-guard refused this command: a loop (until). A ganglion writes no scripts and types no loops (its rule 11).
+Use a tool: each (one command over a list), job or wait-for-file (to wait), measure in file-tools (to count or size files); a job no tool does yet is a request to a claw.
+[exit 2]
+$ cat $MAIL/.script-guard/pond.log
+{"time": "2026-11-28T08:23:23Z", "project": "pond", "kind": "non-code", "session": "s-1", "reason": "a loop (until)", "command": "until [ -f done.txt ]; do sleep 30; done"}
+$ script-guard --check 'git commit -m "for the record, while waiting"' --kind non-code
+allowed
+$ script-guard --check 'ls | each --from - -- ffprobe {}' --kind non-code
+allowed
+$ script-guard --check "python3 -c 'print(1)'" --kind code
+refused: an inline program (python3 -c)
+[exit 2]
+$ script-guard --check "python3 kept-scripts/count.py" --kind code
+allowed
+$ script-guard --check "python3 /tmp/x.py" --kind code
+refused: a script in a temporary folder (/tmp/x.py)
+[exit 2]
+$ script-guard --check "echo 'unclosed" --kind code
+allowed (cannot read it: a ' is not closed)
+$ script-guard --check "sleep 1" --project /nowhere
+allowed (no lobster.conf in /nowhere: script-guard refuses nothing there)
+```
+
+| Code | Meaning |
+|------|---------|
+| 0 | Allowed: the command passes; or the project's kind refuses nothing; or it could not be read, or the input was not the hook's JSON, or a fault of its own (one line on standard error); or a usage error |
+| 2 | Refused: the reason and what to use instead are on standard error (`--check`: `refused: REASON` on standard output) |
+
+It is a reminder that holds through a long session, a compaction and a helper agent, not a lock:
+a session that means to get round it can (a program written to a file outside the temporary
+folders and then run, say). It judges what is run, never what a script does.
+
 ## Errors and exit codes
 
 Every failure is one line on standard error, `lobster-mail <verb>: <what happened> (<what to do>)`,
@@ -1532,7 +1636,7 @@ was changed after it was sent, so ask the sender.
 ```bash
 cd lobster-tools
 python3 -m venv .venv && .venv/bin/pip install -r requirements-dev.txt
-.venv/bin/pytest                # 827 tests, 98% coverage, about 48-52 seconds (22 November 2026)
+.venv/bin/pytest                # 1088 tests, 99% coverage, about 46-54 seconds (28 November 2026)
 .venv/bin/ruff check .          # lint
 ```
 
@@ -1548,7 +1652,10 @@ fakes `-m venv`, the import check and `-m pip install` and records every call; f
 few; secrets' tests run the stand-in `tests/stubs/secretstub` the same way, against a scratch root
 with every name and value invented; each's tests link the stand-in `tests/stubs/eachstub` (a
 `/bin/sh` script that records its arguments and standard input, fails, is killed or holds on
-demand) onto `PATH` as `archive-ask`, and start `each` as a program in a few; and wait-for-file's and job wait's replace the clock and the sleep. Tests pin the
+demand) onto `PATH` as `archive-ask`, and start `each` as a program in a few; script-guard's
+judge the pure `judge()` on bernstein's examples and many more (from a fixed working folder that
+is not a temporary one), and call the hook in-process with invented projects, invented
+`lobster.conf` files and a scratch mail root; and wait-for-file's and job wait's replace the clock and the sleep. Tests pin the
 architectural line: the source names no delete, and no way of running a program but `subprocess`
 inside `run_git` in `check.py`, which takes only reading git verbs (`stash` only as `stash list`),
 and inside `run_program` in `prepare.py`, which takes only `python3 -m venv
@@ -1656,6 +1763,10 @@ started under a pseudo-terminal, where coverage does not follow.
 - `each` runs one item at a time, never in parallel, and keeps no record of a run: what it printed
   is the record. It cannot be given an item that starts with `-` before `--`; such an item goes in a
   `--from` file.
+- `script-guard` is a reminder, not a lock: it judges the commands that are run, never what a
+  script does, and a session that means to get round it can. It does not read `case`, and allows
+  a command with one; it does not know `parallel`, `sudo` or `ssh HOST COMMAND` as wrappers. It
+  works only where hooks run (Claude Code), not in a Cowork session.
 
 ## Notes for users
 
@@ -1781,6 +1892,10 @@ started under a pseudo-terminal, where coverage does not follow.
 - 28 November 2026: a ninth command, `each`: one command over a list of items, one at a time,
   `each ITEM ... -- COMMAND {}` or `each --from FILE -- COMMAND {}`, in place of a `for` loop typed at
   the prompt; see "`each`". Nothing that exists changes.
+- 28 November 2026: a tenth command, `script-guard`, a `PreToolUse` hook for the `Bash` tool that
+  refuses loops, `sleep` and interpreters in a ganglion and inline programs in a claw, and logs each
+  refusal to `.script-guard/PROJECT.log` under the mail root; see "`script-guard`" for the lines to
+  put in `.claude/settings.json`. Nothing changes in a project until the hook is put in its settings.
 
 ## Contributing
 

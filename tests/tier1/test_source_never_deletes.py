@@ -16,7 +16,7 @@ PACKAGE = pathlib.Path(__file__).resolve().parents[2]
 SOURCES = (sorted((PACKAGE / "lobstertools").glob("*.py"))
            + [PACKAGE / "lobster-mail", PACKAGE / "session-check", PACKAGE / "prepare-venv", PACKAGE / "fetch-deb",
               PACKAGE / "request", PACKAGE / "job", PACKAGE / "wait-for-file", PACKAGE / "secrets",
-              PACKAGE / "each"])
+              PACKAGE / "each", PACKAGE / "script-guard"])
 DELETE = re.compile(r"os\.remove\b|os\.unlink\b|shutil\.rmtree\b|\.unlink\(|\brmdir\b")
 RUNS = re.compile(r"\bsubprocess\b|\bos\.system\b|\bos\.popen\b|\bos\.exec|\bos\.spawn")
 

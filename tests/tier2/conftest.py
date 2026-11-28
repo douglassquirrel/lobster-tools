@@ -97,4 +97,5 @@ def every_file(root):
 
 
 from each_helpers import bench, eachstub_is_never_written_over  # noqa: F401  (each's fixtures)
+from guard_helpers import desk  # noqa: F401  (script-guard's fixture)
 from request_helpers import world  # noqa: F401  (the request tests' scratch world)
